@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MTM2 Truck Viewer</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <h1>MTM2 Truck Viewer</h1>
+        <p>Online POD truck preview</p>
+      </div>
+      <div class="load-controls">
+        <input id="file-input" type="file" accept=".pod" hidden>
+        <button id="open-file-button" type="button">Open from disk</button>
+        <div class="url-group">
+          <input id="url-input" type="url" placeholder="https://example.com/truck.pod" spellcheck="false">
+          <button id="open-url-button" type="button">Open from URL</button>
+        </div>
+        <button id="toggle-sidebar-button" type="button" class="quiet">Hide details</button>
+        <button id="clear-temp-button" type="button" class="quiet">Clear temp</button>
+      </div>
+      <div class="status-strip">
+        <span id="status-text">Ready.</span>
+      </div>
+    </header>
+
+    <main id="main-layout" class="main-layout">
+      <aside class="sidebar">
+        <section id="truck-picker-panel" class="panel" hidden>
+          <h2>Trucks in POD</h2>
+          <select id="truck-select" class="truck-select"></select>
+        </section>
+
+        <section class="panel">
+          <h2>Viewer</h2>
+          <div class="toolbar-grid">
+            <button id="reset-camera-button" type="button">Reset view</button>
+            <label><input id="toggle-textures" type="checkbox" checked> Textures</label>
+            <label><input id="toggle-wireframe" type="checkbox"> Wireframe</label>
+            <label><input id="toggle-wheels" type="checkbox" checked> Wheels</label>
+            <label><input id="toggle-axle" type="checkbox" checked> Axle bar</label>
+            <label><input id="toggle-scrape" type="checkbox"> Scrape points</label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Summary</h2>
+          <dl id="manifest-summary" class="kv-list"></dl>
+        </section>
+      </aside>
+
+      <section class="viewport-panel">
+        <div id="viewport" class="viewport">
+          <div id="truck-title" class="truck-title"></div>
+        </div>
+        <section class="warnings-panel">
+          <h2>Warnings</h2>
+          <div id="warnings" class="list-block empty-state">No warnings.</div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
