@@ -129,28 +129,136 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     }
   }
 
-  const barOff = manifest.axlebarOffset ?? { x: 0, y: 0, z: 0 };
-  const fR = manifest.wheelAnchors["faxle.rtire.static_bpos"] ?? { x: 0, y: 0, z: 0 };
-  const fL = manifest.wheelAnchors["faxle.ltire.static_bpos"] ?? { x: 0, y: 0, z: 0 };
-  const rR = manifest.wheelAnchors["raxle.rtire.static_bpos"] ?? { x: 0, y: 0, z: 0 };
-  const rL = manifest.wheelAnchors["raxle.ltire.static_bpos"] ?? { x: 0, y: 0, z: 0 };
-  const frontAxleZ = (fR.z + fL.z) / 2;
-  const rearAxleZ = (rR.z + rL.z) / 2;
-  const axlePositions = [
-    { x: 0, y: barOff.y, z: frontAxleZ + barOff.z },
-    { x: 0, y: barOff.y, z: rearAxleZ + barOff.z }
+  const axlePairs = [
+    {
+      key: "axle_0",
+      leftAnchor: manifest.wheelAnchors["faxle.ltire.static_bpos"] ?? { x: 0, y: 0, z: 0 },
+      rightAnchor: manifest.wheelAnchors["faxle.rtire.static_bpos"] ?? { x: 0, y: 0, z: 0 },
+      leftWheel: wheels.find((wheel) => wheel.key === "faxle.ltire.static_bpos")?.model ?? null,
+      rightWheel: wheels.find((wheel) => wheel.key === "faxle.rtire.static_bpos")?.model ?? null
+    },
+    {
+      key: "axle_1",
+      leftAnchor: manifest.wheelAnchors["raxle.ltire.static_bpos"] ?? { x: 0, y: 0, z: 0 },
+      rightAnchor: manifest.wheelAnchors["raxle.rtire.static_bpos"] ?? { x: 0, y: 0, z: 0 },
+      leftWheel: wheels.find((wheel) => wheel.key === "raxle.ltire.static_bpos")?.model ?? null,
+      rightWheel: wheels.find((wheel) => wheel.key === "raxle.rtire.static_bpos")?.model ?? null
+    }
   ];
+  const axlePlacements = axlePairs.map((pair) => buildAxlePlacement(axle, pair));
 
   return {
     body,
-    axle,
-    axlePositions,
+    axles: axlePlacements,
     wheels,
     scrapePoints: manifest.scrapePoints ?? [],
     textures,
     warnings,
     extractedFiles: [...new Set(extractedFiles)]
   };
+}
+
+function buildAxlePlacement(axleModel, pair) {
+  const position = midpoint(pair.leftAnchor, pair.rightAnchor);
+  if (!axleModel) {
+    return { key: pair.key, model: null, position };
+  }
+
+  const axleBounds = getModelBounds(axleModel);
+  const leftBounds = getModelBounds(pair.leftWheel);
+  const rightBounds = getModelBounds(pair.rightWheel);
+  const axleSpanX = axleBounds?.span.x ?? 0;
+  const halfLeftWidth = leftBounds ? leftBounds.span.x / 2 : 0;
+  const halfRightWidth = rightBounds ? rightBounds.span.x / 2 : 0;
+  const wheelCenterDistance = Math.abs((pair.rightAnchor?.x ?? 0) - (pair.leftAnchor?.x ?? 0));
+  const targetSpanX = Math.max(wheelCenterDistance - halfLeftWidth - halfRightWidth, 0);
+  const scaleX = axleSpanX > 0 && targetSpanX > 0 ? targetSpanX / axleSpanX : 1;
+
+  return {
+    key: pair.key,
+    position,
+    model: transformModel(axleModel, {
+      translate: {
+        x: -(axleBounds?.center.x ?? 0),
+        y: -(axleBounds?.center.y ?? 0),
+        z: -(axleBounds?.center.z ?? 0)
+      },
+      scale: { x: scaleX, y: 1, z: 1 }
+    })
+  };
+}
+
+function midpoint(a, b) {
+  return {
+    x: ((a?.x ?? 0) + (b?.x ?? 0)) / 2,
+    y: ((a?.y ?? 0) + (b?.y ?? 0)) / 2,
+    z: ((a?.z ?? 0) + (b?.z ?? 0)) / 2
+  };
+}
+
+function getModelBounds(model) {
+  if (!model?.vertices?.length) {
+    return null;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const vertex of model.vertices) {
+    minX = Math.min(minX, vertex.x);
+    minY = Math.min(minY, vertex.y);
+    minZ = Math.min(minZ, vertex.z);
+    maxX = Math.max(maxX, vertex.x);
+    maxY = Math.max(maxY, vertex.y);
+    maxZ = Math.max(maxZ, vertex.z);
+  }
+  return {
+    min: { x: minX, y: minY, z: minZ },
+    max: { x: maxX, y: maxY, z: maxZ },
+    center: {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+      z: (minZ + maxZ) / 2
+    },
+    span: {
+      x: maxX - minX,
+      y: maxY - minY,
+      z: maxZ - minZ
+    }
+  };
+}
+
+function transformModel(model, { translate = { x: 0, y: 0, z: 0 }, scale = { x: 1, y: 1, z: 1 } }) {
+  if (!model) {
+    return null;
+  }
+  return {
+    ...model,
+    vertices: (model.vertices ?? []).map((vertex) => ({
+      x: (vertex.x + translate.x) * scale.x,
+      y: (vertex.y + translate.y) * scale.y,
+      z: (vertex.z + translate.z) * scale.z
+    })),
+    meshes: (model.meshes ?? []).map((mesh) => ({
+      ...mesh,
+      positions: transformMeshPositions(mesh.positions, translate, scale)
+    }))
+  };
+}
+
+function transformMeshPositions(positions, translate, scale) {
+  if (!positions?.length) {
+    return positions;
+  }
+  const output = new Float32Array(positions.length);
+  for (let i = 0; i < positions.length; i += 3) {
+    output[i] = (positions[i] + translate.x) * scale.x;
+    output[i + 1] = (positions[i + 1] + translate.y) * scale.y;
+    output[i + 2] = (positions[i + 2] + translate.z) * scale.z;
+  }
+  return output;
 }
 
 function resolveSingleModelEntry(podIndex, requestedName, label, warnings) {

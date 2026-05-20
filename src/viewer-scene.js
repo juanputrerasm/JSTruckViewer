@@ -76,8 +76,8 @@ export class ViewerScene {
     };
 
     addPart("body", assembly.body);
-    for (let i = 0; i < (assembly.axlePositions ?? []).length; i++) {
-      addPart(`axle_${i}`, assembly.axle, assembly.axlePositions[i]);
+    for (const axle of assembly.axles ?? []) {
+      addPart(axle.key, axle.model, axle.position);
     }
     for (const wheel of assembly.wheels ?? []) {
       addPart(wheel.key, wheel.model, wheel.position);
