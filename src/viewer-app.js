@@ -30,6 +30,7 @@ export class TruckViewerApp {
     this.toggleWheels.addEventListener("change", () => this.scene.setWheelsVisible(this.toggleWheels.checked));
     this.toggleAxle.addEventListener("change", () => this.scene.setAxleVisible(this.toggleAxle.checked));
     this.toggleScrape.addEventListener("change", () => this.scene.setScrapePointsVisible(this.toggleScrape.checked));
+    this.toggleLights.addEventListener("change", () => this.scene.setLightsVisible(this.toggleLights.checked));
     this.renderIdleState();
   }
 
@@ -47,6 +48,7 @@ export class TruckViewerApp {
     this.toggleWheels = $("toggle-wheels");
     this.toggleAxle = $("toggle-axle");
     this.toggleScrape = $("toggle-scrape");
+    this.toggleLights = $("toggle-lights");
     this.statusText = $("status-text");
     this.viewport = $("viewport");
     this.mainLayout = $("main-layout");
@@ -158,6 +160,7 @@ export class TruckViewerApp {
     this.scene.setWheelsVisible(this.toggleWheels.checked);
     this.scene.setAxleVisible(this.toggleAxle.checked);
     this.scene.setScrapePointsVisible(this.toggleScrape.checked);
+    this.scene.setLightsVisible(this.toggleLights.checked);
 
     this.truckTitle.textContent = session.manifest.truckName || "";
 

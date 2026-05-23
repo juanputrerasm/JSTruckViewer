@@ -145,35 +145,38 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       rightWheel: wheels.find((wheel) => wheel.key === "raxle.rtire.static_bpos")?.model ?? null
     }
   ];
-  const axlePlacements = axlePairs.map((pair) => buildAxlePlacement(axle, pair));
+  const barOff = manifest.axlebarOffset ?? null;
+  const axlePlacements = axlePairs.map((pair) => buildAxlePlacement(axle, pair, barOff));
+
+  const lights = (manifest.lights ?? [])
+    .filter((l) => l?.pos)
+    .map((l) => ({ pos: l.pos, radius: Math.max(l.bitmapRadius ?? 0.15, 0.1), index: l.index }));
 
   return {
     body,
     axles: axlePlacements,
     wheels,
     scrapePoints: manifest.scrapePoints ?? [],
+    lights,
     textures,
     warnings,
     extractedFiles: [...new Set(extractedFiles)]
   };
 }
 
-function buildAxlePlacement(axleModel, pair) {
-  const position = midpoint(pair.leftAnchor, pair.rightAnchor);
+function buildAxlePlacement(axleModel, pair, axlebarOffset = null) {
+  const mid = midpoint(pair.leftAnchor, pair.rightAnchor);
+  // Use wheel anchor midpoint as the axle center (actual axle height in TRK space).
+  // axlebarOffset.z is a longitudinal fine-tune; .y/.x are for suspension animation, not static placement.
+  const position = {
+    x: mid.x,
+    y: mid.y,
+    z: mid.z + (axlebarOffset?.z ?? 0)
+  };
   if (!axleModel) {
     return { key: pair.key, model: null, position };
   }
-
   const axleBounds = getModelBounds(axleModel);
-  const leftBounds = getModelBounds(pair.leftWheel);
-  const rightBounds = getModelBounds(pair.rightWheel);
-  const axleSpanX = axleBounds?.span.x ?? 0;
-  const halfLeftWidth = leftBounds ? leftBounds.span.x / 2 : 0;
-  const halfRightWidth = rightBounds ? rightBounds.span.x / 2 : 0;
-  const wheelCenterDistance = Math.abs((pair.rightAnchor?.x ?? 0) - (pair.leftAnchor?.x ?? 0));
-  const targetSpanX = Math.max(wheelCenterDistance - halfLeftWidth - halfRightWidth, 0);
-  const scaleX = axleSpanX > 0 && targetSpanX > 0 ? targetSpanX / axleSpanX : 1;
-
   return {
     key: pair.key,
     position,
@@ -183,7 +186,7 @@ function buildAxlePlacement(axleModel, pair) {
         y: -(axleBounds?.center.y ?? 0),
         z: -(axleBounds?.center.z ?? 0)
       },
-      scale: { x: scaleX, y: 1, z: 1 }
+      scale: { x: 1, y: 1, z: 1 }
     })
   };
 }

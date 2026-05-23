@@ -24,6 +24,10 @@ export class ViewerScene {
     this.scrapeGroup = new THREE.Group();
     this.scene.add(this.scrapeGroup);
 
+    this.lightsGroup = new THREE.Group();
+    this.scene.add(this.lightsGroup);
+
+    this.groundGrid = null;
     this.partGroups = new Map();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -35,7 +39,12 @@ export class ViewerScene {
   clear() {
     this.rootGroup.clear();
     this.scrapeGroup.clear();
+    this.lightsGroup.clear();
     this.partGroups.clear();
+    if (this.groundGrid) {
+      this.scene.remove(this.groundGrid);
+      this.groundGrid = null;
+    }
   }
 
   setAssembly(assembly) {
@@ -93,7 +102,27 @@ export class ViewerScene {
       this.scrapeGroup.add(marker);
     }
 
+    for (const light of assembly.lights ?? []) {
+      const radius = Math.min(light.radius ?? 0.15, 0.25);
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 10, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffffaa })
+      );
+      const placement = transformTruckVector(light.pos);
+      marker.position.set(placement.x, placement.y, placement.z);
+      this.lightsGroup.add(marker);
+    }
+
     this.fitToContent();
+
+    const truckBox = new THREE.Box3().setFromObject(this.rootGroup);
+    if (!truckBox.isEmpty()) {
+      this.groundGrid = new THREE.GridHelper(120, 30, 0xbbbbbb, 0xdddddd);
+      this.groundGrid.material.transparent = true;
+      this.groundGrid.material.opacity = 0.6;
+      this.groundGrid.position.y = truckBox.min.y;
+      this.scene.add(this.groundGrid);
+    }
   }
 
   setTexturesEnabled(enabled) {
@@ -135,6 +164,10 @@ export class ViewerScene {
 
   setScrapePointsVisible(visible) {
     this.scrapeGroup.visible = visible;
+  }
+
+  setLightsVisible(visible) {
+    this.lightsGroup.visible = visible;
   }
 
   resetCamera() {

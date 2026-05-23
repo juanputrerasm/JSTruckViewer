@@ -27,6 +27,7 @@ export function parseTruckManifestText(text) {
     instrumentCluster: undefined,
     waveFiles: [],
     numberOfLights: undefined,
+    lights: [],
     unknownFields: {}
   };
 
@@ -91,6 +92,39 @@ export function parseTruckManifestText(text) {
       i += 1;
       continue;
     }
+    const lightMatch = label.match(/^Light (\d+) /);
+    if (lightMatch) {
+      const idx = parseInt(lightMatch[1], 10);
+      const prop = label.slice(lightMatch[0].length).trim();
+      while (manifest.lights.length <= idx) manifest.lights.push(null);
+      if (!manifest.lights[idx]) manifest.lights[idx] = { index: idx };
+      const light = manifest.lights[idx];
+      if (prop.startsWith("body axis pos")) {
+        const parts = value.split(",").map((v) => parseFloat(v) || 0);
+        light.pos = { x: parts[0] ?? 0, y: parts[1] ?? 0, z: parts[2] ?? 0 };
+        light.bitmapRadius = parts[3] ?? 0.25;
+      } else if (prop.startsWith("heading")) {
+        const parts = value.split(",").map((v) => parseFloat(v) || 0);
+        light.heading = parts[0] ?? 0;
+        light.pitch = parts[1] ?? 0;
+        light.spinSpeed = parts[2] ?? 0;
+      } else if (prop.startsWith("cone:")) {
+        const parts = value.split(",");
+        light.coneLength = parseFloat(parts[0]) || 0;
+        light.coneBaseRadius = parseFloat(parts[1]) || 0;
+        light.coneRimRadius = parseFloat(parts[2]) || 0;
+        light.coneTexture = (parts[3] ?? "").trim();
+      } else if (prop.startsWith("source:")) {
+        light.sourceBitmap = value.trim();
+      } else if (prop.startsWith("ms on")) {
+        const [on, off] = value.split(",").map((v) => parseInt(v, 10) || 0);
+        light.msOn = on;
+        light.msOff = off;
+      }
+      i += 1;
+      continue;
+    }
+
     const axisMatch = label.match(/^(.*)\.(x|y|z)$/i);
     if (axisMatch) {
       const anchorKey = axisMatch[1];
@@ -109,6 +143,8 @@ export function parseTruckManifestText(text) {
   for (const [key, vec] of partialAnchors.entries()) {
     manifest.wheelAnchors[key] = vec;
   }
+
+  manifest.lights = manifest.lights.filter(Boolean);
 
   return manifest;
 }
