@@ -117,9 +117,9 @@ export class ViewerScene {
 
     const truckBox = new THREE.Box3().setFromObject(this.rootGroup);
     if (!truckBox.isEmpty()) {
-      this.groundGrid = new THREE.GridHelper(120, 30, 0xbbbbbb, 0xdddddd);
+      this.groundGrid = new THREE.GridHelper(120, 30, 0x4f6485, 0x2d3442);
       this.groundGrid.material.transparent = true;
-      this.groundGrid.material.opacity = 0.6;
+      this.groundGrid.material.opacity = 0.5;
       this.groundGrid.position.y = truckBox.min.y;
       this.scene.add(this.groundGrid);
     }
