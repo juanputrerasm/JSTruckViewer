@@ -84,7 +84,7 @@ export class ViewerScene {
       this.partGroups.set(partKey, group);
     };
 
-    addPart("body", assembly.body);
+    addPart("body", assembly.body, { x: 0, y: -1.0, z: 0 });
     for (const axle of assembly.axles ?? []) {
       addPart(axle.key, axle.model, axle.position);
     }
