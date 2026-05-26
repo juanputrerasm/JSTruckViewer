@@ -72,7 +72,7 @@ export class TruckViewerApp {
     }
     await this.withLoading(`Copying ${file.name} into OPFS...`, async () => {
       const staged = await stagePodFromFile(file);
-      await this.loadFromStaged(staged, `Loaded ${file.name}.`);
+      await this.loadFromStaged(staged, buildLoadedMessage(staged, file.name));
     });
     this.fileInput.value = "";
   }
@@ -85,7 +85,7 @@ export class TruckViewerApp {
     }
     await this.withLoading(`Fetching ${url}...`, async () => {
       const staged = await stagePodFromUrl(url);
-      await this.loadFromStaged(staged, `Loaded POD from ${url}.`);
+      await this.loadFromStaged(staged, buildLoadedMessage(staged, url));
     });
   }
 
@@ -247,4 +247,11 @@ function escapeHtml(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function buildLoadedMessage(staged, sourceLabel) {
+  if (staged?.containerType === "zip") {
+    return `Loaded ${staged.podLabel} from ${sourceLabel}.`;
+  }
+  return `Loaded ${sourceLabel}.`;
 }

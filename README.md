@@ -1,6 +1,6 @@
 # JS Truck Viewer
 
-A simple, pure browser javascript 3D viewer for **Monster Truck Madness 2** trucks. Drop in a `.POD` file from your MTM2 install (or point it at a CORS-enabled URL) and the viewer decodes the truck mesh, textures, and wheel placement entirely client-side — no server, no build step.
+A simple, pure browser javascript 3D viewer for **Monster Truck Madness 2** (MTM2) trucks. Drop in a POD or ZIP file from your local storage (or point it at a CORS-enabled URL) and the viewer decodes the truck mesh, textures, and wheel placement entirely client-side.
 
 ---
 
@@ -13,6 +13,7 @@ A simple, pure browser javascript 3D viewer for **Monster Truck Madness 2** truc
 | Asset storage | [OPFS](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) (Origin Private File System) |
 | Heavy parsing | [Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) |
 | Module system | Native ES modules (no bundler required) |
+| ZIP extraction | [fflate](https://www.npmjs.com/package/fflate) v0.8.2 (MIT) |
 | Styling | Vanilla CSS |
 
 ---
@@ -31,13 +32,18 @@ Then open:
 http://localhost:8080/
 ```
 
-Load a truck by clicking **Open from disk** and selecting any `.POD` file from your stock MTM2 install or downloaded add-on/mod, or paste a CORS-enabled URL into the URL field.
+Live deployment on GitHub Pages:
+
+https://juanputrerasm.github.io/JSTruckViewer/
+
+Load a truck by clicking **Open POD/ZIP from disk** and selecting a `.POD` file or a `.ZIP` that contains one or more POD files, or paste a CORS-enabled URL into the URL field. When a ZIP is loaded, the viewer extracts the first `.POD` entry and continues with the normal truck manifest rules.
 
 ---
 
 ## Features
 
 - Load `.POD` files from local disk or remote URL
+- Load `.ZIP` files from local disk or remote URL by extracting the first `.POD` entry
 - Multi-truck POD support — pick any truck from a dropdown when a POD contains multiple `TRUCK/*.TRK` manifests
 - OPFS-backed per-session extraction (no files leak between sessions)
 - `TRUCK/*.TRK` manifest parsing (truck name, model references, wheel anchors, scrape points)
@@ -78,3 +84,13 @@ src/
 - No truck lighting, audio playback, or physics damage.
 - Wheel variant selection is heuristic — when a prefix matches multiple BIN files (e.g. `RED8`, `RED10`, `RED16`) the highest-numbered (highest-poly) variant is used for all four wheel positions.
 - Must be served over `http://localhost` or HTTPS; `file://` is not supported.
+
+---
+
+## License
+
+This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE).
+
+The project also uses the following third-party dependency:
+
+- `fflate` — MIT License
