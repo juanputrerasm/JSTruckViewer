@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MTM2 Truck Viewer</title>
+  <meta name="description" content="JSTruckViewer is a browser-based Monster Truck Madness 2 truck viewer that loads POD and ZIP archives from disk or URL, decodes BIN models and textures client-side, and renders the truck in Three.js.">
+  <meta name="keywords" content="Monster Truck Madness 2, MTM2, truck viewer, POD viewer, BIN viewer, Three.js, BINedit, MTM, Terminal Reality">
+  <meta name="author" content="Juan Pablo Utreras">
   <link rel="stylesheet" href="./styles.css">
   <script type="importmap">
     {
@@ -25,7 +28,7 @@
         <input id="file-input" type="file" accept=".pod,.zip" hidden>
         <button id="open-file-button" type="button">Open POD/ZIP from disk</button>
         <div class="url-group">
-          <input id="url-input" type="url" placeholder="https://example.com/truck.pod" spellcheck="false">
+          <input id="url-input" type="url" placeholder="https://example.com/truck.pod or /resources/truck.zip" spellcheck="false">
           <button id="open-url-button" type="button">Open from URL</button>
         </div>
         <button id="toggle-sidebar-button" type="button" class="quiet">Hide details</button>
@@ -49,7 +52,7 @@
             <button id="reset-camera-button" type="button">Reset view</button>
             <label><input id="toggle-textures" type="checkbox" checked> Textures</label>
             <label><input id="toggle-wireframe" type="checkbox"> Wireframe</label>
-            <label><input id="toggle-gravity" type="checkbox"> Gravity</label>
+            <label><input id="toggle-gravity" type="checkbox" checked> Gravity</label>
             <label><input id="toggle-wheels" type="checkbox" checked> Wheels</label>
             <label><input id="toggle-axle" type="checkbox" checked> Axles</label>
             <label><input id="toggle-axle-bars" type="checkbox" checked> Axle bars</label>

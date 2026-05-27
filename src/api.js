@@ -24,12 +24,19 @@ export async function stagePodFromFile(file) {
   }
 }
 
+// Web-hosting entry point:
+// 1. fetch a POD/ZIP from a URL the page can access
+// 2. copy it into OPFS so the rest of the app can treat it like a local file
+// 3. index the staged POD and return its truck manifests
+//
+// Important for webmasters: browser fetch still obeys same-origin/CORS rules.
+// Relative URLs like "resources/truck.zip" work when hosted beside the page.
 export async function stagePodFromUrl(url) {
   const sessionId = await prepareFreshSession();
   try {
     const response = await fetch(url, { mode: "cors" });
     if (!response.ok) {
-      throw new Error(`Unable to fetch POD from URL (${response.status} ${response.statusText}).`);
+      throw new Error(`Unable to fetch POD/ZIP from URL (${response.status} ${response.statusText}).`);
     }
     const fileName = nameFromUrl(url);
     const staged = isZipName(fileName)
@@ -135,10 +142,13 @@ async function stagePodResponse(sessionId, response, fileName) {
   if (!response.body) {
     throw new Error("The response body was empty.");
   }
+  // Stream remote POD bytes straight into OPFS to avoid keeping a second full copy in memory.
   return stagePodStream(sessionId, response.body, fileName);
 }
 
 async function stageZipBytes(sessionId, bytes, zipName) {
+  // ZIP loading is still fully client-side: extract the first POD from the fetched/uploaded ZIP,
+  // then stage that POD into OPFS so the worker can index it normally.
   const { podBytes, podEntryName } = await extractFirstPodFromZipBytes(bytes, zipName);
   const podFileName = podNameFromZipEntry(zipName, podEntryName);
   const sourcePath = joinPath("sessions", sessionId, "source", podFileName);

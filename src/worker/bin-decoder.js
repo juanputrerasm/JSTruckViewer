@@ -235,7 +235,7 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
     }
   }
 
-  model.polygons = polygons;
+  model.polygons = dedupePolygons(polygons);
   model.textureNames = [...textureNames];
   model.vertexCount = model.vertices.length;
   model.polygonCount = model.polygons.length;
@@ -453,6 +453,41 @@ function dedupeFaceCorners(vertexIndices, textureU, textureV) {
     nextTextureV.push(textureV[i] ?? 0);
   }
   return { vertexIndices: nextVertexIndices, textureU: nextTextureU, textureV: nextTextureV };
+}
+
+function dedupePolygons(polygons) {
+  const seen = new Set();
+  const output = [];
+  for (const polygon of polygons ?? []) {
+    const key = polygonSignature(polygon);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(polygon);
+  }
+  return output;
+}
+
+function polygonSignature(polygon) {
+  const corners = polygon.vertexIndices.map((vertexIndex, i) => ({
+    vertexIndex,
+    u: polygon.textureU[i] ?? 0,
+    v: polygon.textureV[i] ?? 0
+  }));
+  corners.sort((a, b) => (
+    a.vertexIndex - b.vertexIndex ||
+    a.u - b.u ||
+    a.v - b.v
+  ));
+  return JSON.stringify({
+    type: polygon.type ?? 0,
+    textureName: polygon.textureName ?? "",
+    solid: !!polygon.solid,
+    solidColor: polygon.solidColor ?? 0,
+    transparent: !!polygon.transparent,
+    corners
+  });
 }
 
 function indicesValid(indices, meshVertexCount) {

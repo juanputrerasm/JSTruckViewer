@@ -411,12 +411,6 @@ function resolveWheelEntries(podIndex, prefix, warnings) {
   mapping["raxle.rtire.static_bpos"] = bestRight;
   mapping["raxle.ltire.static_bpos"] = bestLeft;
 
-  if (candidates.length > 2) {
-    warnings.push(
-      `Resolved tire prefix ${prefix} to ${candidates.length} models; using ${bestRight?.title ?? "?"}/${bestLeft?.title ?? "?"} (highest resolution).`
-    );
-  }
-
   return { mapping, candidates };
 }
 

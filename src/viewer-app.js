@@ -29,7 +29,8 @@ export class TruckViewerApp {
     this.toggleWireframe.addEventListener("change", () => this.scene.setWireframeEnabled(this.toggleWireframe.checked));
     this.toggleGravity.addEventListener("change", () => {
       if (this.currentSession) {
-        this.renderSession();
+        this.scene.setGravityEnabled(this.toggleGravity.checked);
+        this.applySceneToggles();
       } else {
         this.scene.setGravityEnabled(this.toggleGravity.checked);
       }
@@ -42,6 +43,7 @@ export class TruckViewerApp {
     this.toggleScrape.addEventListener("change", () => this.scene.setScrapePointsVisible(this.toggleScrape.checked));
     this.toggleLights.addEventListener("change", () => this.scene.setLightsVisible(this.toggleLights.checked));
     this.renderIdleState();
+    void this.autoloadFromPageQuery();
   }
 
   cacheDom() {
@@ -92,15 +94,13 @@ export class TruckViewerApp {
   }
 
   async handleUrlOpen() {
-    const url = this.urlInput.value.trim();
+    const url = this.normalizeArchiveUrl(this.urlInput.value.trim());
     if (!url) {
-      this.setStatus("Enter a POD URL first.");
+      this.setStatus("Enter a POD/ZIP URL first.");
       return;
     }
-    await this.withLoading(`Fetching ${url}...`, async () => {
-      const staged = await stagePodFromUrl(url);
-      await this.loadFromStaged(staged, buildLoadedMessage(staged, url));
-    });
+    this.urlInput.value = url;
+    await this.loadArchiveFromUrl(url);
   }
 
   async loadFromStaged(staged, successMessage) {
@@ -168,8 +168,8 @@ export class TruckViewerApp {
       return;
     }
 
+    this.scene.setGravityEnabled(this.toggleGravity.checked, { rerender: false });
     this.scene.setAssembly(session.assembly);
-    this.scene.setGravityEnabled(this.toggleGravity.checked);
     this.applySceneToggles();
 
     this.truckTitle.textContent = session.manifest.truckName || "";
@@ -186,10 +186,8 @@ export class TruckViewerApp {
       ["Instrument Cluster", session.manifest.instrumentCluster || "<none>"],
       ["Wave files", session.manifest.waveFiles.join(", ") || "<none>"],
       ["Lights", String(session.manifest.numberOfLights ?? 0)],
-      ["Wheel anchors", String(Object.keys(session.manifest.wheelAnchors).length)],
       ["Scrape points", String(session.manifest.scrapePoints.length)],
-      ["Source", session.sourceMode === "disk" ? "disk" : "URL"],
-      ["Entries", String(session.podIndex.entries.length)]
+      ["Source", session.sourceMode === "disk" ? "disk" : "URL"]
     ]);
 
     const warnings = session.assembly.warnings ?? [];
@@ -232,6 +230,36 @@ export class TruckViewerApp {
 
   setStatus(message) {
     this.statusText.textContent = message;
+  }
+
+  // Shared URL-loading path used by both the "Open from URL" button and ?file= links.
+  // This keeps the webmaster integration obvious: if you can provide a reachable POD/ZIP URL,
+  // the viewer can fetch it, stage it into OPFS, and load it without any server-side code.
+  async loadArchiveFromUrl(url) {
+    await this.withLoading(`Fetching ${url}...`, async () => {
+      const staged = await stagePodFromUrl(url);
+      await this.loadFromStaged(staged, buildLoadedMessage(staged, url));
+    });
+  }
+
+  async autoloadFromPageQuery() {
+    const url = getArchiveUrlFromPageQuery(this.document.defaultView?.location);
+    if (!url) {
+      return;
+    }
+    this.urlInput.value = url;
+    await this.loadArchiveFromUrl(url);
+  }
+
+  normalizeArchiveUrl(value) {
+    if (!value) {
+      return "";
+    }
+    try {
+      return new URL(value, this.document.baseURI).toString();
+    } catch {
+      return value;
+    }
   }
 
   applySceneToggles() {
@@ -285,4 +313,26 @@ function formatVec3(vec) {
     return "<none>";
   }
   return `${vec.x ?? 0}, ${vec.y ?? 0}, ${vec.z ?? 0}`;
+}
+
+// Hosting helper:
+//   /JSTruckViewer/?file=resources/truck.zip
+//   /JSTruckViewer/?url=https://example.com/truck.pod
+//
+// Browsers expose query parameters to client-side code, so a static page can use them
+// to auto-load a remote or relative archive as long as the target URL is fetchable.
+function getArchiveUrlFromPageQuery(location) {
+  if (!location) {
+    return "";
+  }
+  const params = new URLSearchParams(location.search);
+  const rawValue = params.get("file") || params.get("url") || "";
+  if (!rawValue) {
+    return "";
+  }
+  try {
+    return new URL(rawValue, location.href).toString();
+  } catch {
+    return rawValue;
+  }
 }

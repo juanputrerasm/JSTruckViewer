@@ -85,6 +85,10 @@ export function parseTruckManifestText(text) {
     if (label === "Wave File") {
       manifest.waveFiles.push(value);
       i += 1;
+      while (i + 1 < lines.length && !isManifestLabel(lines[i + 1])) {
+        manifest.waveFiles.push(lines[i + 1]);
+        i += 1;
+      }
       continue;
     }
     if (label === "Number of Lights") {
@@ -156,4 +160,20 @@ function parseVec3(value) {
     y: parseFloat(y) || 0,
     z: parseFloat(z) || 0
   };
+}
+
+function isManifestLabel(line) {
+  return line === "truckModelBaseName"
+    || line === "tireModelBaseName"
+    || line === "axleModelName"
+    || line === "shockTextureName"
+    || line === "barTextureName"
+    || line === "axlebarOffset"
+    || line === "driveshaftPos"
+    || line === "Instrument Cluster"
+    || line === "Wave File"
+    || line === "Number of Lights"
+    || line.startsWith("Scrape point ")
+    || /^Light \d+ /.test(line)
+    || /^(.*)\.(x|y|z)$/i.test(line);
 }

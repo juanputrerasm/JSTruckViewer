@@ -63,10 +63,10 @@ export class ViewerScene {
 
   setAssembly(assembly) {
     this.currentAssembly = assembly;
-    this.renderAssembly();
+    this.renderAssembly(true);
   }
 
-  renderAssembly() {
+  renderAssembly(fitCamera = true) {
     this.clear();
     const assembly = this.currentAssembly;
     if (!assembly) {
@@ -74,8 +74,10 @@ export class ViewerScene {
     }
     const textureMap = new Map();
     for (const texture of assembly.textures ?? []) {
-      const dataTexture = createDataTexture(texture);
-      textureMap.set(normalizeTextureKey(texture.name), dataTexture);
+      textureMap.set(normalizeTextureKey(texture.name), {
+        opaque: createDataTexture(texture, "opaque"),
+        cutout: createDataTexture(texture, "cutout")
+      });
     }
     const gravityOffset = this.gravityEnabled ? { x: 0, y: -1, z: 0 } : { x: 0, y: 0, z: 0 };
 
@@ -91,20 +93,22 @@ export class ViewerScene {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.positions), 3));
         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.normals), 3));
+        const textureEntry = textureMap.get(normalizeTextureKey(meshData.textureName)) ?? null;
+        const diffuseMap = textureEntry ? (meshData.transparent ? textureEntry.cutout : textureEntry.opaque) : null;
         if (meshData.uvs?.length) {
-          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(meshData.uvs, 2));
+          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(buildDisplayUvs(meshData.uvs, diffuseMap), 2));
         }
-        const diffuseMap = textureMap.get(normalizeTextureKey(meshData.textureName)) ?? null;
+        // Legacy BIN truck/body meshes are wound opposite to what Three.js expects.
+        // Rendering the "back" side matches BinEdit/OpenGL, where front faces are culled.
         const material = new THREE.MeshBasicMaterial({
           color: diffuseMap ? 0xffffff : (meshData.color ?? 0x9b9b9b),
           map: diffuseMap,
           wireframe: false,
-          side: THREE.DoubleSide,
+          side: THREE.BackSide,
           transparent: !!meshData.transparent,
           alphaTest: meshData.transparent ? 0.5 : 0
         });
-        const mesh = new THREE.Mesh(geometry, material);
-        group.add(mesh);
+        group.add(new THREE.Mesh(geometry, material));
       }
       this.rootGroup.add(group);
       this.partGroups.set(partKey, group);
@@ -152,7 +156,9 @@ export class ViewerScene {
       this.lightsGroup.add(marker);
     }
 
-    this.fitToContent();
+    if (fitCamera) {
+      this.fitToContent();
+    }
 
     const truckBox = this.contentBounds();
     if (!truckBox.isEmpty()) {
@@ -213,10 +219,10 @@ export class ViewerScene {
     this.driveshaftGroup.visible = visible;
   }
 
-  setGravityEnabled(enabled) {
+  setGravityEnabled(enabled, options = {}) {
     this.gravityEnabled = enabled;
-    if (this.currentAssembly) {
-      this.renderAssembly();
+    if (this.currentAssembly && options.rerender !== false) {
+      this.renderAssembly(false);
     }
   }
 
@@ -282,7 +288,8 @@ export class ViewerScene {
   }
 
   addCylinderSegments(group, segments, { color, radius, textureMap, textureName, useTexture = true }, startKey = "start", endKey = "end") {
-    const diffuseMap = useTexture ? (textureMap.get(normalizeTextureKey(textureName)) ?? null) : null;
+    const textureEntry = textureMap.get(normalizeTextureKey(textureName)) ?? null;
+    const diffuseMap = useTexture ? (textureEntry?.opaque ?? null) : null;
     for (const segment of segments) {
       const start = transformTruckVector(segment[startKey] ?? { x: 0, y: 0, z: 0 });
       const end = transformTruckVector(segment[endKey] ?? { x: 0, y: 0, z: 0 });
@@ -298,7 +305,7 @@ export class ViewerScene {
     if (!driveshaft) {
       return;
     }
-    const diffuseMap = textureMap.get(normalizeTextureKey(driveshaft.textureName)) ?? null;
+    const diffuseMap = textureMap.get(normalizeTextureKey(driveshaft.textureName))?.opaque ?? null;
     const hub = transformTruckVector(driveshaft.hub ?? { x: 0, y: 0, z: 0 });
     const front = transformTruckVector(driveshaft.front ?? { x: 0, y: 0, z: 0 });
     const rear = transformTruckVector(driveshaft.rear ?? { x: 0, y: 0, z: 0 });
@@ -306,7 +313,7 @@ export class ViewerScene {
       ["driveshaft_front", hub, front],
       ["driveshaft_rear", hub, rear]
     ]) {
-      const mesh = buildCylinderBetween(start, end, 0.14, diffuseMap, 0xcfcfcf);
+      const mesh = buildCylinderBetween(start, end, 0.14, diffuseMap, 0x8e8e8e);
       if (mesh) {
         mesh.name = name;
         this.driveshaftGroup.add(mesh);
@@ -315,11 +322,28 @@ export class ViewerScene {
   }
 }
 
-function createDataTexture(texture) {
+function createDataTexture(texture, mode = "opaque") {
   const data = new Uint8Array(texture.rgba);
+  if (mode === "opaque") {
+    for (let i = 3; i < data.length; i += 4) {
+      data[i] = 255;
+    }
+  } else if (mode === "cutout") {
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      data[i + 3] = r < 9 && g < 9 && b < 9 ? 0 : 255;
+    }
+  }
   const dataTexture = new THREE.DataTexture(data, texture.width, texture.height, THREE.RGBAFormat);
   dataTexture.colorSpace = THREE.SRGBColorSpace;
   dataTexture.flipY = true;
+  dataTexture.wrapS = THREE.ClampToEdgeWrapping;
+  dataTexture.wrapT = THREE.ClampToEdgeWrapping;
+  dataTexture.magFilter = THREE.NearestFilter;
+  dataTexture.minFilter = THREE.NearestFilter;
+  dataTexture.generateMipmaps = false;
   dataTexture.needsUpdate = true;
   return dataTexture;
 }
@@ -343,6 +367,36 @@ function buildCylinderBetween(start, end, radius, diffuseMap, color) {
   mesh.position.copy(midpoint);
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
   return mesh;
+}
+
+function buildDisplayUvs(sourceUvs, texture) {
+  const output = new Float32Array(sourceUvs.length);
+  if (!texture?.image?.width || !texture?.image?.height) {
+    for (let i = 0; i < sourceUvs.length; i += 1) {
+      output[i] = clamp01(sourceUvs[i]);
+    }
+    return output;
+  }
+  const width = texture.image.width;
+  const height = texture.image.height;
+  for (let i = 0; i < sourceUvs.length; i += 2) {
+    output[i] = snapUvToTexel(sourceUvs[i], width);
+    output[i + 1] = snapUvToTexel(sourceUvs[i + 1], height);
+  }
+  return output;
+}
+
+function snapUvToTexel(value, size) {
+  const clamped = clamp01(value);
+  if (!Number.isFinite(size) || size <= 1) {
+    return clamped;
+  }
+  const texelIndex = Math.floor(clamped * (size - 1));
+  return Math.min(1 - 0.5 / size, Math.max(0.5 / size, (texelIndex + 0.5) / size));
+}
+
+function clamp01(value) {
+  return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
 }
 
 function offsetTruckVector(vector, offset) {
