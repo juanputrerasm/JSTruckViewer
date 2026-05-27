@@ -101,6 +101,7 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
   const polygons = [];
   const textureNames = new Set();
   let currentTexture = "";
+  let currentSolidColor = 0;
   let meshVerts = model.vertices.length;
 
   blocks:
@@ -145,6 +146,7 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
         if (reader.remaining() < 20) break blocks;
         reader.skip(4);
         currentTexture = upper(reader.readFixedAscii(16));
+        currentSolidColor = 0;
         break;
       case 0x0000001d: {
         if (reader.remaining() < 24) break blocks;
@@ -166,11 +168,12 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
         } else {
           break blocks;
         }
+        currentSolidColor = 0;
         break;
       }
       case 0x0000000a:
         if (reader.remaining() < 4) break blocks;
-        reader.skip(4);
+        currentSolidColor = reader.readInt32() & 0x00ffffff;
         currentTexture = "";
         break;
       case 0x0000000c:
@@ -209,7 +212,7 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
       case 0x00000033:
       case 0x00000034:
       case 0x0000000e: {
-        const polygon = readMappedFace(reader, token, currentTexture, meshVerts);
+        const polygon = readMappedFace(reader, token, currentTexture, currentSolidColor, meshVerts);
         if (polygon) {
           polygons.push(polygon);
           if (polygon.textureName) textureNames.add(polygon.textureName);
@@ -220,7 +223,7 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
       case 0x00000019:
       case 0x00000006:
       case 0x0000000f: {
-        const polygon = readUnmappedFace(reader, token, currentTexture, meshVerts);
+        const polygon = readUnmappedFace(reader, token, currentTexture, currentSolidColor, meshVerts);
         if (polygon) {
           polygons.push(polygon);
           if (polygon.textureName) textureNames.add(polygon.textureName);
@@ -241,9 +244,21 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
 function buildMeshes(model) {
   const grouped = new Map();
   for (const polygon of model.polygons ?? []) {
-    const key = polygon.textureName || "__flat__";
+    const key = [
+      polygon.textureName || "__flat__",
+      polygon.transparent ? "cutout" : "opaque",
+      polygon.solid ? `solid:${polygon.solidColor >>> 0}` : "textured"
+    ].join("|");
     if (!grouped.has(key)) {
-      grouped.set(key, { positions: [], normals: [], uvs: [], textureName: polygon.textureName || "" });
+      grouped.set(key, {
+        positions: [],
+        normals: [],
+        uvs: [],
+        textureName: polygon.textureName || "",
+        transparent: !!polygon.transparent,
+        solid: !!polygon.solid,
+        solidColor: polygon.solidColor ?? 0
+      });
     }
     const bucket = grouped.get(key);
     triangulatePolygon(model.vertices, polygon, bucket);
@@ -253,7 +268,9 @@ function buildMeshes(model) {
     positions: new Float32Array(bucket.positions),
     normals: new Float32Array(bucket.normals),
     uvs: new Float32Array(bucket.uvs),
-    color: representativeColor(bucket.textureName)
+    color: bucket.solid ? (bucket.solidColor >>> 0) : representativeColor(bucket.textureName),
+    transparent: bucket.transparent,
+    solid: bucket.solid
   }));
   return model;
 }
@@ -263,8 +280,8 @@ function triangulatePolygon(vertices, polygon, bucket) {
   if (!vertexIndices || vertexIndices.length < 3) {
     return;
   }
-  for (let i = 1; i < vertexIndices.length - 1; i += 1) {
-    const indices = [0, i, i + 1];
+  const triangleSets = chooseTriangles(vertices, vertexIndices);
+  for (const indices of triangleSets) {
     const p0 = vertices[vertexIndices[indices[0]]];
     const p1 = vertices[vertexIndices[indices[1]]];
     const p2 = vertices[vertexIndices[indices[2]]];
@@ -281,6 +298,52 @@ function triangulatePolygon(vertices, polygon, bucket) {
   }
 }
 
+function chooseTriangles(vertices, vertexIndices) {
+  if (vertexIndices.length === 3) {
+    return [[0, 1, 2]];
+  }
+  if (vertexIndices.length === 4) {
+    const optionA = [[0, 1, 2], [0, 2, 3]];
+    const optionB = [[0, 1, 3], [1, 2, 3]];
+    return scoreTriangleSplit(vertices, vertexIndices, optionA) >= scoreTriangleSplit(vertices, vertexIndices, optionB)
+      ? optionA
+      : optionB;
+  }
+  const fan = [];
+  for (let i = 1; i < vertexIndices.length - 1; i += 1) {
+    fan.push([0, i, i + 1]);
+  }
+  return fan;
+}
+
+function scoreTriangleSplit(vertices, vertexIndices, triangles) {
+  const normals = [];
+  let areaScore = 0;
+  for (const tri of triangles) {
+    const a = vertices[vertexIndices[tri[0]]];
+    const b = vertices[vertexIndices[tri[1]]];
+    const c = vertices[vertexIndices[tri[2]]];
+    if (!a || !b || !c) return -Infinity;
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const abz = b.z - a.z;
+    const acx = c.x - a.x;
+    const acy = c.y - a.y;
+    const acz = c.z - a.z;
+    const nx = aby * acz - abz * acy;
+    const ny = abz * acx - abx * acz;
+    const nz = abx * acy - aby * acx;
+    const len = Math.hypot(nx, ny, nz);
+    if (!Number.isFinite(len) || len < 1e-6) return -Infinity;
+    normals.push([nx / len, ny / len, nz / len]);
+    areaScore += len;
+  }
+  const dot = normals.length === 2
+    ? (normals[0][0] * normals[1][0] + normals[0][1] * normals[1][1] + normals[0][2] * normals[1][2])
+    : 1;
+  return dot * 100000 + areaScore;
+}
+
 function computeNormal(a, b, c) {
   const abx = b.x - a.x;
   const aby = b.y - a.y;
@@ -295,12 +358,15 @@ function computeNormal(a, b, c) {
   return { x: nx / length, y: ny / length, z: nz / length };
 }
 
-function readMappedFace(reader, type, textureName, meshVertexCount) {
+function readMappedFace(reader, type, textureName, solidColor, meshVertexCount) {
   if (meshVertexCount < 1) return null;
   const n = reader.readInt32();
   const need = 16 + n * 12;
   if (n < 3 || n > MAX_CORNERS_PER_FACE || reader.remaining() < need) return null;
-  reader.skip(16);
+  const storedNormalX = reader.readInt32();
+  const storedNormalY = reader.readInt32();
+  const storedNormalZ = reader.readInt32();
+  const faceMagic = reader.readInt32();
   const vertexIndices = [];
   const textureU = [];
   const textureV = [];
@@ -317,15 +383,33 @@ function readMappedFace(reader, type, textureName, meshVertexCount) {
       vertexIndices[i] -= 1;
     }
   }
-  return { type, textureName, vertexIndices, textureU, textureV };
+  const cleaned = dedupeFaceCorners(vertexIndices, textureU, textureV);
+  if (cleaned.vertexIndices.length < 3) return null;
+  return {
+    type,
+    textureName,
+    vertexIndices: cleaned.vertexIndices,
+    textureU: cleaned.textureU,
+    textureV: cleaned.textureV,
+    solid: type === 0x00000019,
+    solidColor,
+    transparent: type === 0x00000011 || type === 0x00000033,
+    storedNormalX,
+    storedNormalY,
+    storedNormalZ,
+    faceMagic
+  };
 }
 
-function readUnmappedFace(reader, type, textureName, meshVertexCount) {
+function readUnmappedFace(reader, type, textureName, solidColor, meshVertexCount) {
   if (meshVertexCount < 1) return null;
   const n = reader.readInt32();
   const need = 16 + n * 4;
   if (n < 3 || n > MAX_CORNERS_PER_FACE || reader.remaining() < need) return null;
-  reader.skip(16);
+  const storedNormalX = reader.readInt32();
+  const storedNormalY = reader.readInt32();
+  const storedNormalZ = reader.readInt32();
+  const faceMagic = reader.readInt32();
   const vertexIndices = [];
   for (let i = 0; i < n; i += 1) {
     vertexIndices.push(reader.readInt32());
@@ -338,7 +422,37 @@ function readUnmappedFace(reader, type, textureName, meshVertexCount) {
       vertexIndices[i] -= 1;
     }
   }
-  return { type, textureName, vertexIndices, textureU: new Array(n).fill(0), textureV: new Array(n).fill(0) };
+  const cleaned = dedupeFaceCorners(vertexIndices, new Array(n).fill(0), new Array(n).fill(0));
+  if (cleaned.vertexIndices.length < 3) return null;
+  return {
+    type,
+    textureName,
+    vertexIndices: cleaned.vertexIndices,
+    textureU: cleaned.textureU,
+    textureV: cleaned.textureV,
+    solid: type === 0x00000019,
+    solidColor,
+    transparent: type === 0x00000011 || type === 0x00000033,
+    storedNormalX,
+    storedNormalY,
+    storedNormalZ,
+    faceMagic
+  };
+}
+
+function dedupeFaceCorners(vertexIndices, textureU, textureV) {
+  const nextVertexIndices = [];
+  const nextTextureU = [];
+  const nextTextureV = [];
+  for (let i = 0; i < vertexIndices.length; i += 1) {
+    if (nextVertexIndices.includes(vertexIndices[i])) {
+      continue;
+    }
+    nextVertexIndices.push(vertexIndices[i]);
+    nextTextureU.push(textureU[i] ?? 0);
+    nextTextureV.push(textureV[i] ?? 0);
+  }
+  return { vertexIndices: nextVertexIndices, textureU: nextTextureU, textureV: nextTextureV };
 }
 
 function indicesValid(indices, meshVertexCount) {

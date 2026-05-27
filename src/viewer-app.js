@@ -27,8 +27,18 @@ export class TruckViewerApp {
     this.truckSelect.addEventListener("change", () => this.handleTruckSelection());
     this.toggleTextures.addEventListener("change", () => this.scene.setTexturesEnabled(this.toggleTextures.checked));
     this.toggleWireframe.addEventListener("change", () => this.scene.setWireframeEnabled(this.toggleWireframe.checked));
+    this.toggleGravity.addEventListener("change", () => {
+      if (this.currentSession) {
+        this.renderSession();
+      } else {
+        this.scene.setGravityEnabled(this.toggleGravity.checked);
+      }
+    });
     this.toggleWheels.addEventListener("change", () => this.scene.setWheelsVisible(this.toggleWheels.checked));
     this.toggleAxle.addEventListener("change", () => this.scene.setAxleVisible(this.toggleAxle.checked));
+    this.toggleAxleBars.addEventListener("change", () => this.scene.setAxleBarsVisible(this.toggleAxleBars.checked));
+    this.toggleShocks.addEventListener("change", () => this.scene.setShocksVisible(this.toggleShocks.checked));
+    this.toggleDriveshaft.addEventListener("change", () => this.scene.setDriveshaftVisible(this.toggleDriveshaft.checked));
     this.toggleScrape.addEventListener("change", () => this.scene.setScrapePointsVisible(this.toggleScrape.checked));
     this.toggleLights.addEventListener("change", () => this.scene.setLightsVisible(this.toggleLights.checked));
     this.renderIdleState();
@@ -45,8 +55,12 @@ export class TruckViewerApp {
     this.resetCameraButton = $("reset-camera-button");
     this.toggleTextures = $("toggle-textures");
     this.toggleWireframe = $("toggle-wireframe");
+    this.toggleGravity = $("toggle-gravity");
     this.toggleWheels = $("toggle-wheels");
     this.toggleAxle = $("toggle-axle");
+    this.toggleAxleBars = $("toggle-axle-bars");
+    this.toggleShocks = $("toggle-shocks");
+    this.toggleDriveshaft = $("toggle-driveshaft");
     this.toggleScrape = $("toggle-scrape");
     this.toggleLights = $("toggle-lights");
     this.statusText = $("status-text");
@@ -123,7 +137,7 @@ export class TruckViewerApp {
     }
     this.currentSession = null;
     this.stagedSession = null;
-    this.scene.clear();
+    this.scene.setAssembly(null);
     this.renderIdleState();
     this.setStatus("Session temp files cleared.");
   }
@@ -155,12 +169,8 @@ export class TruckViewerApp {
     }
 
     this.scene.setAssembly(session.assembly);
-    this.scene.setTexturesEnabled(this.toggleTextures.checked);
-    this.scene.setWireframeEnabled(this.toggleWireframe.checked);
-    this.scene.setWheelsVisible(this.toggleWheels.checked);
-    this.scene.setAxleVisible(this.toggleAxle.checked);
-    this.scene.setScrapePointsVisible(this.toggleScrape.checked);
-    this.scene.setLightsVisible(this.toggleLights.checked);
+    this.scene.setGravityEnabled(this.toggleGravity.checked);
+    this.applySceneToggles();
 
     this.truckTitle.textContent = session.manifest.truckName || "";
 
@@ -171,6 +181,8 @@ export class TruckViewerApp {
       ["Axle Model Name", session.manifest.axleModelName || "<missing>"],
       ["Shock Texture Name", session.manifest.shockTextureName || "<none>"],
       ["Bar Texture Name", session.manifest.barTextureName || "<none>"],
+      ["Driveshaft Pos", formatVec3(session.manifest.driveshaftPos)],
+      ["Axle Bar Offset", formatVec3(session.manifest.axlebarOffset)],
       ["Instrument Cluster", session.manifest.instrumentCluster || "<none>"],
       ["Wave files", session.manifest.waveFiles.join(", ") || "<none>"],
       ["Lights", String(session.manifest.numberOfLights ?? 0)],
@@ -221,6 +233,18 @@ export class TruckViewerApp {
   setStatus(message) {
     this.statusText.textContent = message;
   }
+
+  applySceneToggles() {
+    this.scene.setTexturesEnabled(this.toggleTextures.checked);
+    this.scene.setWireframeEnabled(this.toggleWireframe.checked);
+    this.scene.setWheelsVisible(this.toggleWheels.checked);
+    this.scene.setAxleVisible(this.toggleAxle.checked);
+    this.scene.setAxleBarsVisible(this.toggleAxleBars.checked);
+    this.scene.setShocksVisible(this.toggleShocks.checked);
+    this.scene.setDriveshaftVisible(this.toggleDriveshaft.checked);
+    this.scene.setScrapePointsVisible(this.toggleScrape.checked);
+    this.scene.setLightsVisible(this.toggleLights.checked);
+  }
 }
 
 function renderKeyValues(entries) {
@@ -254,4 +278,11 @@ function buildLoadedMessage(staged, sourceLabel) {
     return `Loaded ${staged.podLabel} from ${sourceLabel}.`;
   }
   return `Loaded ${sourceLabel}.`;
+}
+
+function formatVec3(vec) {
+  if (!vec) {
+    return "<none>";
+  }
+  return `${vec.x ?? 0}, ${vec.y ?? 0}, ${vec.z ?? 0}`;
 }

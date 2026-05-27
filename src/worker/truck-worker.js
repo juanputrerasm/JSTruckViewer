@@ -145,8 +145,12 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       rightWheel: wheels.find((wheel) => wheel.key === "raxle.rtire.static_bpos")?.model ?? null
     }
   ];
-  const barOff = manifest.axlebarOffset ?? null;
-  const axlePlacements = axlePairs.map((pair) => buildAxlePlacement(axle, pair, barOff));
+  const axlePlacements = axlePairs.map((pair) => buildAxlePlacement(axle, pair));
+  const frontAxleCenter = buildPreviewAxleCenter(axlePairs[0].leftAnchor, axlePairs[0].rightAnchor);
+  const rearAxleCenter = buildPreviewAxleCenter(axlePairs[1].leftAnchor, axlePairs[1].rightAnchor);
+  const shocks = buildShockDescriptors(frontAxleCenter, rearAxleCenter);
+  const axleBars = buildAxleBarDescriptors(frontAxleCenter, rearAxleCenter, manifest.axlebarOffset);
+  const driveshaft = buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos);
 
   const lights = (manifest.lights ?? [])
     .filter((l) => l?.pos)
@@ -155,6 +159,11 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
   return {
     body,
     axles: axlePlacements,
+    axleBars,
+    shocks,
+    driveshaft,
+    barTextureName: manifest.barTextureName ?? "",
+    shockTextureName: manifest.shockTextureName ?? "",
     wheels,
     scrapePoints: manifest.scrapePoints ?? [],
     lights,
@@ -164,15 +173,100 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
   };
 }
 
-function buildAxlePlacement(axleModel, pair, axlebarOffset = null) {
-  const mid = midpoint(pair.leftAnchor, pair.rightAnchor);
-  // Use wheel anchor midpoint as the axle center (actual axle height in TRK space).
-  // axlebarOffset.z is a longitudinal fine-tune; .y/.x are for suspension animation, not static placement.
-  const position = {
-    x: mid.x,
-    y: mid.y,
-    z: mid.z + (axlebarOffset?.z ?? 0)
+const PREVIEW_UNIT_SCALE = 1 / 256;
+const SHOCK_OFFSET_X = 542 * PREVIEW_UNIT_SCALE;
+const SHOCK_OFFSET_Y = 85 * PREVIEW_UNIT_SCALE;
+const SHOCK_OFFSET_Z = 0 * PREVIEW_UNIT_SCALE;
+const AXLE_BAR_OFFSET_X = 535 * PREVIEW_UNIT_SCALE;
+const AXLE_BAR_OFFSET_Y = -80 * PREVIEW_UNIT_SCALE;
+const AXLE_BAR_OFFSET_Z = -83 * PREVIEW_UNIT_SCALE;
+const AXLE_BAR_MIDDLE_Y_BIAS = 45 * PREVIEW_UNIT_SCALE;
+
+function buildShockDescriptors(frontAxleCenter, rearAxleCenter) {
+  return [
+    {
+      key: "shock_fl",
+      base: { x: frontAxleCenter.x - SHOCK_OFFSET_X, y: 0, z: frontAxleCenter.z + SHOCK_OFFSET_Z },
+      top: { x: frontAxleCenter.x - SHOCK_OFFSET_X, y: frontAxleCenter.y + SHOCK_OFFSET_Y, z: frontAxleCenter.z + SHOCK_OFFSET_Z }
+    },
+    {
+      key: "shock_fr",
+      base: { x: frontAxleCenter.x + SHOCK_OFFSET_X, y: 0, z: frontAxleCenter.z + SHOCK_OFFSET_Z },
+      top: { x: frontAxleCenter.x + SHOCK_OFFSET_X, y: frontAxleCenter.y + SHOCK_OFFSET_Y, z: frontAxleCenter.z + SHOCK_OFFSET_Z }
+    },
+    {
+      key: "shock_rl",
+      base: { x: rearAxleCenter.x - SHOCK_OFFSET_X, y: 0, z: rearAxleCenter.z - SHOCK_OFFSET_Z },
+      top: { x: rearAxleCenter.x - SHOCK_OFFSET_X, y: rearAxleCenter.y + SHOCK_OFFSET_Y, z: rearAxleCenter.z - SHOCK_OFFSET_Z }
+    },
+    {
+      key: "shock_rr",
+      base: { x: rearAxleCenter.x + SHOCK_OFFSET_X, y: 0, z: rearAxleCenter.z - SHOCK_OFFSET_Z },
+      top: { x: rearAxleCenter.x + SHOCK_OFFSET_X, y: rearAxleCenter.y + SHOCK_OFFSET_Y, z: rearAxleCenter.z - SHOCK_OFFSET_Z }
+    }
+  ];
+}
+
+function buildAxleBarDescriptors(frontAxleCenter, rearAxleCenter, barOffset = null) {
+  const middleRight = {
+    x: barOffset?.x ?? 0,
+    y: (barOffset?.y ?? 0) + AXLE_BAR_MIDDLE_Y_BIAS,
+    z: barOffset?.z ?? 0
   };
+  const middleLeft = { x: -middleRight.x, y: middleRight.y, z: middleRight.z };
+  const frontRight = {
+    x: frontAxleCenter.x + AXLE_BAR_OFFSET_X,
+    y: frontAxleCenter.y + AXLE_BAR_OFFSET_Y,
+    z: frontAxleCenter.z + AXLE_BAR_OFFSET_Z
+  };
+  const frontLeft = {
+    x: frontRight.x - 2 * AXLE_BAR_OFFSET_X,
+    y: frontRight.y,
+    z: frontRight.z
+  };
+  const rearRight = {
+    x: rearAxleCenter.x + AXLE_BAR_OFFSET_X,
+    y: rearAxleCenter.y + AXLE_BAR_OFFSET_Y,
+    z: rearAxleCenter.z - AXLE_BAR_OFFSET_Z
+  };
+  const rearLeft = {
+    x: rearRight.x - 2 * AXLE_BAR_OFFSET_X,
+    y: rearRight.y,
+    z: rearRight.z
+  };
+  return [
+    { key: "axle_bar_left_front", start: middleLeft, end: frontLeft },
+    { key: "axle_bar_left_rear", start: middleLeft, end: rearLeft },
+    { key: "axle_bar_right_front", start: middleRight, end: frontRight },
+    { key: "axle_bar_right_rear", start: middleRight, end: rearRight }
+  ];
+}
+
+function buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, driveshaftPos = null) {
+  const hub = {
+    x: 0,
+    y: driveshaftPos?.y ?? 0,
+    z: driveshaftPos?.z ?? 0
+  };
+  return {
+    key: "driveshaft",
+    hub,
+    front: frontAxleCenter,
+    rear: rearAxleCenter
+  };
+}
+
+function buildPreviewAxleCenter(leftAnchor, rightAnchor) {
+  const mid = midpoint(leftAnchor, rightAnchor);
+  return {
+    x: mid.x,
+    y: mid.y + 1,
+    z: mid.z
+  };
+}
+
+function buildAxlePlacement(axleModel, pair) {
+  const position = buildPreviewAxleCenter(pair.leftAnchor, pair.rightAnchor);
   if (!axleModel) {
     return { key: pair.key, model: null, position };
   }

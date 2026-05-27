@@ -19,7 +19,7 @@ export function decodeRawTexture(rawBytes, actBytes, textureName) {
     rgba[out] = palette[colorIndex];
     rgba[out + 1] = palette[colorIndex + 1];
     rgba[out + 2] = palette[colorIndex + 2];
-    rgba[out + 3] = 255;
+    rgba[out + 3] = rawBytes[i] === 0 ? 0 : 255;
   }
   return { name: textureName, width, height, rgba };
 }
