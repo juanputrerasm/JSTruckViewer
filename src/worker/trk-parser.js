@@ -5,8 +5,10 @@ export function parseTruckManifestText(text) {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-  // First line is "MTM2 truckName" (version + first key combined); strip it.
-  if (lines.length > 0 && lines[0].toUpperCase().startsWith("MTM2")) {
+  const headerLine = lines[0] ?? "";
+
+  // First line identifies the truck format version, for example "MTM2 ..." or "MTM2.1 ...".
+  if (lines.length > 0 && headerLine.toUpperCase().startsWith("MTM2")) {
     lines.shift();
   }
 
@@ -14,6 +16,7 @@ export function parseTruckManifestText(text) {
   const truckName = lines.shift() ?? "";
 
   const manifest = {
+    formatVersion: headerLine.toUpperCase().startsWith("MTM2.1") ? "MTM2.1" : "MTM2",
     truckName,
     truckModelBaseName: "",
     tireModelBaseName: "",
@@ -21,6 +24,7 @@ export function parseTruckManifestText(text) {
     shockTextureName: undefined,
     barTextureName: undefined,
     axlebarOffset: undefined,
+    superiorAxlebarOffset: undefined,
     driveshaftPos: undefined,
     wheelAnchors: {},
     scrapePoints: [],
@@ -64,6 +68,11 @@ export function parseTruckManifestText(text) {
     }
     if (label === "axlebarOffset") {
       manifest.axlebarOffset = parseVec3(value);
+      i += 1;
+      continue;
+    }
+    if (label === "superiorAxlebarOffset") {
+      manifest.superiorAxlebarOffset = parseSuperiorAxlebarOffset(value);
       i += 1;
       continue;
     }
@@ -162,6 +171,15 @@ function parseVec3(value) {
   };
 }
 
+function parseSuperiorAxlebarOffset(value) {
+  const [frontAxleY = "0", rearAxleY = "0", middleY = "0"] = value.split(",");
+  return {
+    frontAxleY: parseFloat(frontAxleY) || 0,
+    rearAxleY: parseFloat(rearAxleY) || 0,
+    middleY: parseFloat(middleY) || 0
+  };
+}
+
 function isManifestLabel(line) {
   return line === "truckModelBaseName"
     || line === "tireModelBaseName"
@@ -169,6 +187,7 @@ function isManifestLabel(line) {
     || line === "shockTextureName"
     || line === "barTextureName"
     || line === "axlebarOffset"
+    || line === "superiorAxlebarOffset"
     || line === "driveshaftPos"
     || line === "Instrument Cluster"
     || line === "Wave File"

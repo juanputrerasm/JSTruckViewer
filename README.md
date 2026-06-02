@@ -47,7 +47,7 @@ Load a truck by clicking **Open POD/ZIP from disk** and selecting a `.POD` file 
 - Multi-truck POD support, pick any truck from a dropdown when a POD contains multiple `TRUCK/*.TRK` manifests
 - OPFS-backed per-session extraction (no files leak between sessions)
 - `TRUCK/*.TRK` manifest parsing (truck name, model references, wheel anchors, scrape points)
-- Static BIN mesh decoding, `BLOCK_MRGL_MAGNIFY` and `ANIMATED_BIN` formats
+- Static BIN mesh decoding
 - `RAW` + `ACT` texture decoding with fallback palette support
 - Full truck assembly: body, dual axle bars, four independently positioned wheels, scrape-point markers
 - Viewer controls: texture toggle, wireframe toggle, wheel visibility, axle bar visibility, camera reset

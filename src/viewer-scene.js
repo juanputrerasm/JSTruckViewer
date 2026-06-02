@@ -79,7 +79,10 @@ export class ViewerScene {
         cutout: createDataTexture(texture, "cutout")
       });
     }
-    const gravityOffset = this.gravityEnabled ? { x: 0, y: -1, z: 0 } : { x: 0, y: 0, z: 0 };
+    // The gravity toggle lowers the chassis only. Wheels and axle-linked parts stay at ride height,
+    // so suspension links can stretch/re-angle instead of the whole assembly translating together.
+    const bodyOffset = this.gravityEnabled ? { x: 0, y: -1, z: 0 } : { x: 0, y: 0, z: 0 };
+    const axleOffset = { x: 0, y: 0, z: 0 };
 
     const addPart = (partKey, model, position = { x: 0, y: 0, z: 0 }) => {
       if (!model) {
@@ -114,33 +117,33 @@ export class ViewerScene {
       this.partGroups.set(partKey, group);
     };
 
-    addPart("body", assembly.body, offsetTruckVector({ x: 0, y: 0, z: 0 }, gravityOffset));
+    addPart("body", assembly.body, offsetTruckVector({ x: 0, y: 0, z: 0 }, bodyOffset));
     for (const axle of assembly.axles ?? []) {
-      addPart(axle.key, axle.model, offsetTruckVector(axle.position, gravityOffset));
+      addPart(axle.key, axle.model, offsetTruckVector(axle.position, axleOffset));
     }
     for (const wheel of assembly.wheels ?? []) {
       addPart(wheel.key, wheel.model, wheel.position);
     }
-    this.addCylinderSegments(this.axleBarsGroup, offsetTruckSegments(assembly.axleBars ?? [], gravityOffset), {
+    this.addCylinderSegments(this.axleBarsGroup, offsetAnchoredSegments(assembly.axleBars ?? [], { body: bodyOffset, axle: axleOffset }), {
       color: 0xb6b6b6,
       radius: 0.16,
       textureMap,
       textureName: assembly.barTextureName ?? ""
     });
-    this.addCylinderSegments(this.shocksGroup, offsetTruckSegments(assembly.shocks ?? [], gravityOffset), {
+    this.addCylinderSegments(this.shocksGroup, offsetAnchoredSegments(assembly.shocks ?? [], { body: bodyOffset, axle: axleOffset }, "base", "top"), {
       color: 0xb7b7b7,
       radius: 0.12,
       textureMap,
       textureName: assembly.shockTextureName ?? ""
     }, "base", "top");
-    this.addDriveshaft(offsetTruckDriveshaft(assembly.driveshaft, gravityOffset), textureMap);
+    this.addDriveshaft(offsetAnchoredDriveshaft(assembly.driveshaft, { body: bodyOffset, axle: axleOffset }), textureMap);
 
     for (const point of assembly.scrapePoints ?? []) {
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(0.3, 12, 12),
         new THREE.MeshBasicMaterial({ color: 0xc0663b })
       );
-      const placement = transformTruckVector(offsetTruckVector(point, gravityOffset));
+      const placement = transformTruckVector(offsetTruckVector(point, bodyOffset));
       marker.position.set(placement.x, placement.y, placement.z);
       this.scrapeGroup.add(marker);
     }
@@ -151,7 +154,7 @@ export class ViewerScene {
         new THREE.SphereGeometry(radius, 10, 10),
         new THREE.MeshBasicMaterial({ color: 0xffffaa })
       );
-      const placement = transformTruckVector(offsetTruckVector(light.pos, gravityOffset));
+      const placement = transformTruckVector(offsetTruckVector(light.pos, bodyOffset));
       marker.position.set(placement.x, placement.y, placement.z);
       this.lightsGroup.add(marker);
     }
@@ -407,26 +410,32 @@ function offsetTruckVector(vector, offset) {
   };
 }
 
-function offsetTruckSegments(segments, offset) {
+function offsetAnchoredSegments(segments, offsets, startKey = "start", endKey = "end") {
   return segments.map((segment) => ({
     ...segment,
-    start: segment.start ? offsetTruckVector(segment.start, offset) : segment.start,
-    end: segment.end ? offsetTruckVector(segment.end, offset) : segment.end,
-    base: segment.base ? offsetTruckVector(segment.base, offset) : segment.base,
-    top: segment.top ? offsetTruckVector(segment.top, offset) : segment.top
+    [startKey]: segment[startKey]
+      ? offsetTruckVector(segment[startKey], resolveAttachmentOffset(segment[`${startKey}Attachment`], offsets))
+      : segment[startKey],
+    [endKey]: segment[endKey]
+      ? offsetTruckVector(segment[endKey], resolveAttachmentOffset(segment[`${endKey}Attachment`], offsets))
+      : segment[endKey]
   }));
 }
 
-function offsetTruckDriveshaft(driveshaft, offset) {
+function offsetAnchoredDriveshaft(driveshaft, offsets) {
   if (!driveshaft) {
     return driveshaft;
   }
   return {
     ...driveshaft,
-    hub: offsetTruckVector(driveshaft.hub, offset),
-    front: offsetTruckVector(driveshaft.front, offset),
-    rear: offsetTruckVector(driveshaft.rear, offset)
+    hub: offsetTruckVector(driveshaft.hub, resolveAttachmentOffset(driveshaft.hubAttachment, offsets)),
+    front: offsetTruckVector(driveshaft.front, resolveAttachmentOffset(driveshaft.frontAttachment, offsets)),
+    rear: offsetTruckVector(driveshaft.rear, resolveAttachmentOffset(driveshaft.rearAttachment, offsets))
   };
+}
+
+function resolveAttachmentOffset(attachment, offsets) {
+  return attachment === "axle" ? offsets.axle : offsets.body;
 }
 
 function normalizeTextureKey(name) {
