@@ -237,6 +237,10 @@ body {
   padding: 10px 12px 12px;
 }
 
+.main-layout.sidebar-collapsed .warnings-panel {
+  display: none;
+}
+
 .truck-select {
   width: 100%;
   margin-top: 6px;
