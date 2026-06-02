@@ -1,4 +1,5 @@
 import {
+  describeTruckEntries,
   disposeSession,
   loadTruckFromStaged,
   stagePodFromFile,
@@ -25,8 +26,12 @@ export class TruckViewerApp {
     this.clearTempButton.addEventListener("click", () => this.clearSession());
     this.resetCameraButton.addEventListener("click", () => this.scene.resetCamera());
     this.truckSelect.addEventListener("change", () => this.handleTruckSelection());
+    this.backgroundColor.addEventListener("input", () => this.scene.setBackgroundColor(this.backgroundColor.value));
+    this.lightPosition.addEventListener("change", () => this.scene.setSceneLightPosition(this.lightPosition.value));
     this.toggleTextures.addEventListener("change", () => this.scene.setTexturesEnabled(this.toggleTextures.checked));
+    this.toggleSmoothTextures.addEventListener("change", () => this.scene.setTextureSmoothingEnabled(this.toggleSmoothTextures.checked));
     this.toggleWireframe.addEventListener("change", () => this.scene.setWireframeEnabled(this.toggleWireframe.checked));
+    this.toggleSceneLighting.addEventListener("change", () => this.scene.setSceneLightingEnabled(this.toggleSceneLighting.checked));
     this.toggleGravity.addEventListener("change", () => {
       if (this.currentSession) {
         this.scene.setGravityEnabled(this.toggleGravity.checked);
@@ -55,8 +60,12 @@ export class TruckViewerApp {
     this.toggleSidebarButton = $("toggle-sidebar-button");
     this.clearTempButton = $("clear-temp-button");
     this.resetCameraButton = $("reset-camera-button");
+    this.backgroundColor = $("background-color");
+    this.lightPosition = $("light-position");
     this.toggleTextures = $("toggle-textures");
+    this.toggleSmoothTextures = $("toggle-smooth-textures");
     this.toggleWireframe = $("toggle-wireframe");
+    this.toggleSceneLighting = $("toggle-scene-lighting");
     this.toggleGravity = $("toggle-gravity");
     this.toggleWheels = $("toggle-wheels");
     this.toggleAxle = $("toggle-axle");
@@ -70,6 +79,7 @@ export class TruckViewerApp {
     this.mainLayout = $("main-layout");
     this.manifestSummary = $("manifest-summary");
     this.warnings = $("warnings");
+    this.warningsPanel = $("warnings-panel");
     this.truckPickerPanel = $("truck-picker-panel");
     this.truckSelect = $("truck-select");
     this.truckTitle = $("truck-title");
@@ -108,13 +118,15 @@ export class TruckViewerApp {
       throw new Error("No TRUCK/*.TRK files were found in the POD.");
     }
     this.stagedSession = staged;
+    const firstEntry = staged.trkEntries[0];
+    this.currentSession = await loadTruckFromStaged(staged, firstEntry.normalizedName);
+    this.renderSession({ fitCamera: true });
     if (staged.trkEntries.length > 1) {
-      this.renderTruckPicker(staged.trkEntries);
-      this.setStatus(`Found ${staged.trkEntries.length} trucks — pick one to load.`);
+      const pickerEntries = await describeTruckEntries(staged);
+      this.renderTruckPicker(pickerEntries, firstEntry.normalizedName);
+      this.setStatus(`${successMessage} Found ${staged.trkEntries.length} trucks in this POD.`);
     } else {
       this.hideTruckPicker();
-      this.currentSession = await loadTruckFromStaged(staged, staged.trkEntries[0].normalizedName);
-      this.renderSession();
       this.setStatus(successMessage);
     }
   }
@@ -126,7 +138,7 @@ export class TruckViewerApp {
     }
     await this.withLoading(`Loading ${normalizedName}...`, async () => {
       this.currentSession = await loadTruckFromStaged(this.stagedSession, normalizedName);
-      this.renderSession();
+      this.renderSession({ fitCamera: false });
       this.setStatus(`Loaded ${normalizedName}.`);
     });
   }
@@ -144,14 +156,19 @@ export class TruckViewerApp {
 
   renderIdleState() {
     this.manifestSummary.innerHTML = "";
-    this.warnings.innerHTML = '<div class="empty-state">No warnings.</div>';
+    this.warnings.innerHTML = "";
+    this.warningsPanel.hidden = true;
     this.hideTruckPicker();
     this.truckTitle.textContent = "";
   }
 
-  renderTruckPicker(entries) {
+  renderTruckPicker(entries, selectedNormalizedName = "") {
     this.truckSelect.innerHTML = entries
-      .map((e) => `<option value="${escapeHtml(e.normalizedName)}">${escapeHtml(e.title)}</option>`)
+      .map((e) => {
+        const label = e.manifestTruckName ? `${e.title} (${e.manifestTruckName})` : e.title;
+        const selected = e.normalizedName === selectedNormalizedName ? " selected" : "";
+        return `<option value="${escapeHtml(e.normalizedName)}"${selected}>${escapeHtml(label)}</option>`;
+      })
       .join("");
     this.truckPickerPanel.hidden = false;
   }
@@ -161,7 +178,7 @@ export class TruckViewerApp {
     this.truckSelect.innerHTML = "";
   }
 
-  renderSession() {
+  renderSession(options = {}) {
     const session = this.currentSession;
     if (!session) {
       this.renderIdleState();
@@ -169,7 +186,7 @@ export class TruckViewerApp {
     }
 
     this.scene.setGravityEnabled(this.toggleGravity.checked, { rerender: false });
-    this.scene.setAssembly(session.assembly);
+    this.scene.setAssembly(session.assembly, { fitCamera: options.fitCamera !== false });
     this.applySceneToggles();
 
     this.truckTitle.textContent = session.manifest.truckName || "";
@@ -191,9 +208,10 @@ export class TruckViewerApp {
     ]);
 
     const warnings = session.assembly.warnings ?? [];
+    this.warningsPanel.hidden = warnings.length === 0;
     this.warnings.innerHTML = warnings.length
       ? renderList(warnings.map((warning) => ({ title: warning, detail: "", kind: "warning" })))
-      : '<div class="empty-state">No warnings.</div>';
+      : "";
   }
 
   async withLoading(message, work) {
@@ -207,6 +225,7 @@ export class TruckViewerApp {
       await work();
     } catch (error) {
       this.setStatus(error.message);
+      this.warningsPanel.hidden = false;
       this.warnings.innerHTML = renderList([{ title: error.message, detail: "", kind: "warning" }]);
     } finally {
       this.loading = false;
@@ -221,6 +240,9 @@ export class TruckViewerApp {
       this.toggleSidebarButton,
       this.clearTempButton,
       this.resetCameraButton,
+      this.backgroundColor,
+      this.lightPosition,
+      this.toggleSceneLighting,
       this.urlInput,
       this.truckSelect
     ]) {
@@ -263,7 +285,11 @@ export class TruckViewerApp {
   }
 
   applySceneToggles() {
+    this.scene.setBackgroundColor(this.backgroundColor.value);
+    this.scene.setSceneLightingEnabled(this.toggleSceneLighting.checked, { rerender: false });
+    this.scene.setSceneLightPosition(this.lightPosition.value);
     this.scene.setTexturesEnabled(this.toggleTextures.checked);
+    this.scene.setTextureSmoothingEnabled(this.toggleSmoothTextures.checked);
     this.scene.setWireframeEnabled(this.toggleWireframe.checked);
     this.scene.setWheelsVisible(this.toggleWheels.checked);
     this.scene.setAxleVisible(this.toggleAxle.checked);

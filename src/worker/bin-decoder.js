@@ -503,9 +503,8 @@ function upper(value) {
 }
 
 function representativeColor(textureName) {
-  const seed = [...(textureName || "__flat__")].reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const hue = seed % 360;
-  return hslToHex(hue / 360, 0.22, 0.64);
+  void textureName;
+  return 0x8f8f8f;
 }
 
 function hslToHex(h, s, l) {

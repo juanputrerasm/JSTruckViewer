@@ -21,7 +21,7 @@
   --warning-bg: rgba(92, 56, 40, 0.28);
   --font: "Segoe UI", system-ui, sans-serif;
   --mono: "Consolas", "Fira Code", monospace;
-  --sidebar-w: 280px;
+  --sidebar-w: 320px;
 }
 
 html,
@@ -151,6 +151,11 @@ body {
   font-size: 12px;
 }
 
+.toolbar-grid label:has(select),
+.toolbar-grid label:has(input[type="color"]) {
+  justify-content: space-between;
+}
+
 .toolbar-grid button {
   grid-column: 1 / -1;
 }
@@ -277,6 +282,20 @@ body {
   display: block;
 }
 
+.viewport-watermark {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  color: rgba(120, 120, 130, 0.55);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 button {
   background: var(--surface2);
   color: var(--text);
@@ -316,8 +335,29 @@ input[type="url"] {
   width: 240px;
 }
 
+select,
+input[type="color"] {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font);
+}
+
+select {
+  padding: 5px 8px;
+}
+
+input[type="color"] {
+  width: 40px;
+  height: 26px;
+  padding: 2px;
+}
+
 input[type="url"]:focus,
 select:focus,
+input[type="color"]:focus,
 button:focus-visible {
   outline: none;
   border-color: var(--accent-dim);

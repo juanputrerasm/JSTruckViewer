@@ -447,19 +447,18 @@ function buildSuperiorAxleBarSet(frontAxleCenter, rearAxleCenter, baseBarOffset 
   if (!superiorBarOffset) {
     return [];
   }
-  // MTM2 2.1 does not define a second full XYZ offset. The three integers are preview-space Y
-  // values for the front axle link, rear axle link, and body midpoint, while X/Z still follow
-  // the legacy axle-bar layout.
+  // MTM2 2.1 stores the second axle-bar heights relative to the legacy axle-bar layout:
+  // front connection Y, rear connection Y, and midpoint Y. X/Z still follow the base axle-bar.
   const resolvedBaseOffset = baseBarOffset ?? { x: 0, y: 0, z: 0 };
   const middleRight = {
     x: resolvedBaseOffset.x ?? 0,
-    y: (superiorBarOffset.middleY ?? 0) * PREVIEW_UNIT_SCALE,
+    y: (resolvedBaseOffset.y ?? 0) + AXLE_BAR_MIDDLE_Y_BIAS + (superiorBarOffset.middleY ?? 0) * PREVIEW_UNIT_SCALE,
     z: resolvedBaseOffset.z ?? 0
   };
   const middleLeft = { x: -middleRight.x, y: middleRight.y, z: middleRight.z };
   const frontRight = {
     x: frontAxleCenter.x + AXLE_BAR_OFFSET_X,
-    y: frontAxleCenter.y + (superiorBarOffset.frontAxleY ?? 0) * PREVIEW_UNIT_SCALE,
+    y: frontAxleCenter.y + AXLE_BAR_OFFSET_Y + (superiorBarOffset.frontAxleY ?? 0) * PREVIEW_UNIT_SCALE,
     z: frontAxleCenter.z + AXLE_BAR_OFFSET_Z
   };
   const frontLeft = {
@@ -469,7 +468,7 @@ function buildSuperiorAxleBarSet(frontAxleCenter, rearAxleCenter, baseBarOffset 
   };
   const rearRight = {
     x: rearAxleCenter.x + AXLE_BAR_OFFSET_X,
-    y: rearAxleCenter.y + (superiorBarOffset.rearAxleY ?? 0) * PREVIEW_UNIT_SCALE,
+    y: rearAxleCenter.y + AXLE_BAR_OFFSET_Y + (superiorBarOffset.rearAxleY ?? 0) * PREVIEW_UNIT_SCALE,
     z: rearAxleCenter.z - AXLE_BAR_OFFSET_Z
   };
   const rearLeft = {

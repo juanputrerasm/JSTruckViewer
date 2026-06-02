@@ -64,6 +64,23 @@ export async function loadTruckFromStaged(staged, trkNormalizedName) {
   return await hydrateWithManifest(sessionId, opfsPodPath, podIndex, manifestInfo, { sourceMode, sourceLabel });
 }
 
+export async function describeTruckEntries(staged) {
+  const { sessionId, opfsPodPath, podIndex } = staged;
+  return await Promise.all((staged.trkEntries ?? []).map(async (entry) => {
+    const manifestInfo = await workerClient.call("extractTruckManifestByName", {
+      sessionId,
+      opfsPodPath,
+      podIndex,
+      normalizedName: entry.normalizedName
+    });
+    const manifest = await parseTruckManifest(manifestInfo.opfsTrkPath);
+    return {
+      ...entry,
+      manifestTruckName: manifest.truckName || ""
+    };
+  }));
+}
+
 export async function indexPod(opfsPodPath) {
   return workerClient.call("indexPod", { opfsPodPath });
 }

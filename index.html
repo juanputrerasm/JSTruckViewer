@@ -50,8 +50,20 @@
           <h2>Viewer</h2>
           <div class="toolbar-grid">
             <button id="reset-camera-button" type="button">Reset view</button>
+            <label>Background <input id="background-color" type="color" value="#0a0a10"></label>
+            <label>L Pos
+              <select id="light-position">
+                <option value="front-left">Front left</option>
+                <option value="front-right">Front right</option>
+                <option value="top" selected>Top</option>
+                <option value="rear-left">Rear left</option>
+                <option value="rear-right">Rear right</option>
+              </select>
+            </label>
             <label><input id="toggle-textures" type="checkbox" checked> Textures</label>
+            <label><input id="toggle-smooth-textures" type="checkbox"> Smooth textures</label>
             <label><input id="toggle-wireframe" type="checkbox"> Wireframe</label>
+            <label><input id="toggle-scene-lighting" type="checkbox"> Scene lighting</label>
             <label><input id="toggle-gravity" type="checkbox" checked> Gravity</label>
             <label><input id="toggle-wheels" type="checkbox" checked> Wheels</label>
             <label><input id="toggle-axle" type="checkbox" checked> Axles</label>
@@ -72,8 +84,9 @@
       <section class="viewport-panel">
         <div id="viewport" class="viewport">
           <div id="truck-title" class="truck-title"></div>
+          <div class="viewport-watermark">THE MONSTER TRUCK MADNESS GUILD</div>
         </div>
-        <section class="warnings-panel">
+        <section id="warnings-panel" class="warnings-panel" hidden>
           <h2>Warnings</h2>
           <div id="warnings" class="list-block empty-state">No warnings.</div>
         </section>

@@ -5,7 +5,8 @@ export class ViewerScene {
   constructor(container) {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.scene.background = null;
+    this.backgroundColor = "#0a0a10";
+    this.scene.background = new THREE.Color(this.backgroundColor);
     this.camera = new THREE.PerspectiveCamera(48, 1, 0.1, 10000);
     this.camera.position.set(0, 18, 34);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -17,6 +18,15 @@ export class ViewerScene {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.target.set(0, 2, 0);
+
+    this.sceneLightingEnabled = false;
+    this.smoothTexturesEnabled = false;
+    this.sceneLightPosition = "top";
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    this.directionalLight = new THREE.DirectionalLight(0xffffff, 1.8);
+    this.scene.add(this.ambientLight);
+    this.scene.add(this.directionalLight);
+    this.updateSceneLights();
 
     this.rootGroup = new THREE.Group();
     this.scene.add(this.rootGroup);
@@ -61,9 +71,9 @@ export class ViewerScene {
     }
   }
 
-  setAssembly(assembly) {
+  setAssembly(assembly, options = {}) {
     this.currentAssembly = assembly;
-    this.renderAssembly(true);
+    this.renderAssembly(options.fitCamera !== false);
   }
 
   renderAssembly(fitCamera = true) {
@@ -75,8 +85,8 @@ export class ViewerScene {
     const textureMap = new Map();
     for (const texture of assembly.textures ?? []) {
       textureMap.set(normalizeTextureKey(texture.name), {
-        opaque: createDataTexture(texture, "opaque"),
-        cutout: createDataTexture(texture, "cutout")
+        opaque: createDataTexture(texture, "opaque", this.smoothTexturesEnabled),
+        cutout: createDataTexture(texture, "cutout", this.smoothTexturesEnabled)
       });
     }
     // The gravity toggle lowers the chassis only. Wheels and axle-linked parts stay at ride height,
@@ -103,10 +113,9 @@ export class ViewerScene {
         }
         // Legacy BIN truck/body meshes are wound opposite to what Three.js expects.
         // Rendering the "back" side matches BinEdit/OpenGL, where front faces are culled.
-        const material = new THREE.MeshBasicMaterial({
+        const material = this.createSurfaceMaterial({
           color: diffuseMap ? 0xffffff : (meshData.color ?? 0x9b9b9b),
           map: diffuseMap,
-          wireframe: false,
           side: THREE.BackSide,
           transparent: !!meshData.transparent,
           alphaTest: meshData.transparent ? 0.5 : 0
@@ -126,7 +135,7 @@ export class ViewerScene {
     }
     this.addCylinderSegments(this.axleBarsGroup, offsetAnchoredSegments(assembly.axleBars ?? [], { body: bodyOffset, axle: axleOffset }), {
       color: 0xb6b6b6,
-      radius: 0.16,
+      radius: 0.10,
       textureMap,
       textureName: assembly.barTextureName ?? ""
     });
@@ -185,6 +194,18 @@ export class ViewerScene {
     });
   }
 
+  setTextureSmoothingEnabled(enabled) {
+    this.smoothTexturesEnabled = enabled;
+    this.traverseRenderableParts((node) => {
+      if (node.isMesh && node.material?.map) {
+        applyTextureFiltering(node.material.map, enabled);
+      }
+      if (node.material?.userData?.originalMap) {
+        applyTextureFiltering(node.material.userData.originalMap, enabled);
+      }
+    });
+  }
+
   setWireframeEnabled(enabled) {
     this.traverseRenderableParts((node) => {
       if (node.isMesh && node.material) {
@@ -192,6 +213,27 @@ export class ViewerScene {
         node.material.needsUpdate = true;
       }
     });
+  }
+
+  setBackgroundColor(color) {
+    this.backgroundColor = color || "#0a0a10";
+    this.scene.background = new THREE.Color(this.backgroundColor);
+  }
+
+  setSceneLightingEnabled(enabled, options = {}) {
+    this.sceneLightingEnabled = enabled;
+    this.updateSceneLights();
+    if (this.currentAssembly && options.rerender !== false) {
+      this.renderAssembly(false);
+    }
+  }
+
+  setSceneLightPosition(position, options = {}) {
+    this.sceneLightPosition = position || "top";
+    this.updateSceneLights();
+    if (this.currentAssembly && options.rerender !== false && this.sceneLightingEnabled) {
+      this.renderAssembly(false);
+    }
   }
 
   setWheelsVisible(visible) {
@@ -296,7 +338,7 @@ export class ViewerScene {
     for (const segment of segments) {
       const start = transformTruckVector(segment[startKey] ?? { x: 0, y: 0, z: 0 });
       const end = transformTruckVector(segment[endKey] ?? { x: 0, y: 0, z: 0 });
-      const mesh = buildCylinderBetween(start, end, radius, diffuseMap, color);
+      const mesh = buildCylinderBetween(start, end, radius, diffuseMap, color, this.sceneLightingEnabled);
       if (mesh) {
         mesh.name = segment.key ?? "";
         group.add(mesh);
@@ -316,16 +358,46 @@ export class ViewerScene {
       ["driveshaft_front", hub, front],
       ["driveshaft_rear", hub, rear]
     ]) {
-      const mesh = buildCylinderBetween(start, end, 0.14, diffuseMap, 0x8e8e8e);
+      const mesh = buildCylinderBetween(start, end, 0.14, diffuseMap, 0x4b321f, this.sceneLightingEnabled);
       if (mesh) {
         mesh.name = name;
         this.driveshaftGroup.add(mesh);
       }
     }
   }
+
+  createSurfaceMaterial({ color, map = null, side = THREE.FrontSide, transparent = false, alphaTest = 0 }) {
+    const materialProps = {
+      color,
+      map,
+      wireframe: false,
+      side,
+      transparent,
+      alphaTest
+    };
+    return this.sceneLightingEnabled
+      ? new THREE.MeshLambertMaterial(materialProps)
+      : new THREE.MeshBasicMaterial(materialProps);
+  }
+
+  updateSceneLights() {
+    this.ambientLight.visible = this.sceneLightingEnabled;
+    this.directionalLight.visible = this.sceneLightingEnabled;
+    const positions = {
+      // Truck forward maps to negative Z in scene space, and the viewer's left/right labels
+      // should match what the user sees on screen around the truck.
+      "front-left": [-30, 40, -25],
+      "front-right": [30, 40, -25],
+      top: [0, 55, 0],
+      "rear-left": [-30, 35, 25],
+      "rear-right": [30, 35, 25]
+    };
+    const [x, y, z] = positions[this.sceneLightPosition] ?? positions.top;
+    this.directionalLight.position.set(x, y, z);
+  }
 }
 
-function createDataTexture(texture, mode = "opaque") {
+function createDataTexture(texture, mode = "opaque", smooth = false) {
   const data = new Uint8Array(texture.rgba);
   if (mode === "opaque") {
     for (let i = 3; i < data.length; i += 4) {
@@ -344,14 +416,19 @@ function createDataTexture(texture, mode = "opaque") {
   dataTexture.flipY = true;
   dataTexture.wrapS = THREE.ClampToEdgeWrapping;
   dataTexture.wrapT = THREE.ClampToEdgeWrapping;
-  dataTexture.magFilter = THREE.NearestFilter;
-  dataTexture.minFilter = THREE.NearestFilter;
+  applyTextureFiltering(dataTexture, smooth);
   dataTexture.generateMipmaps = false;
   dataTexture.needsUpdate = true;
   return dataTexture;
 }
 
-function buildCylinderBetween(start, end, radius, diffuseMap, color) {
+function applyTextureFiltering(texture, smooth) {
+  texture.magFilter = smooth ? THREE.LinearFilter : THREE.NearestFilter;
+  texture.minFilter = smooth ? THREE.LinearFilter : THREE.NearestFilter;
+  texture.needsUpdate = true;
+}
+
+function buildCylinderBetween(start, end, radius, diffuseMap, color, lit = false) {
   const from = new THREE.Vector3(start.x, start.y, start.z);
   const to = new THREE.Vector3(end.x, end.y, end.z);
   const delta = new THREE.Vector3().subVectors(to, from);
@@ -360,11 +437,14 @@ function buildCylinderBetween(start, end, radius, diffuseMap, color) {
     return null;
   }
   const geometry = new THREE.CylinderGeometry(radius, radius, length, 12, 1, false);
-  const material = new THREE.MeshBasicMaterial({
+  const materialProps = {
     color: diffuseMap ? 0xffffff : color,
     map: diffuseMap ?? null,
     side: THREE.DoubleSide
-  });
+  };
+  const material = lit
+    ? new THREE.MeshLambertMaterial(materialProps)
+    : new THREE.MeshBasicMaterial(materialProps);
   const mesh = new THREE.Mesh(geometry, material);
   const midpoint = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
   mesh.position.copy(midpoint);
