@@ -25,6 +25,7 @@ export class TruckViewerApp {
     this.toggleSidebarButton.addEventListener("click", () => this.toggleSidebar());
     this.clearTempButton.addEventListener("click", () => this.clearSession());
     this.resetCameraButton.addEventListener("click", () => this.scene.resetCamera());
+    this.saveScreenshotButton.addEventListener("click", () => this.handleSaveScreenshot());
     this.truckSelect.addEventListener("change", () => this.handleTruckSelection());
     this.backgroundColor.addEventListener("input", () => this.scene.setBackgroundColor(this.backgroundColor.value));
     this.lightPosition.addEventListener("change", () => this.scene.setSceneLightPosition(this.lightPosition.value));
@@ -60,6 +61,7 @@ export class TruckViewerApp {
     this.toggleSidebarButton = $("toggle-sidebar-button");
     this.clearTempButton = $("clear-temp-button");
     this.resetCameraButton = $("reset-camera-button");
+    this.saveScreenshotButton = $("save-screenshot-button");
     this.backgroundColor = $("background-color");
     this.lightPosition = $("light-position");
     this.toggleTextures = $("toggle-textures");
@@ -233,6 +235,25 @@ export class TruckViewerApp {
     }
   }
 
+  async handleSaveScreenshot() {
+    try {
+      this.setStatus("Saving screenshot...");
+      const blob = await this.scene.saveScreenshotJpeg();
+      const truckName = this.currentSession?.manifest?.truckName?.trim();
+      const base = truckName ? sanitizeFilename(truckName) : "jstruckviewer";
+      const filename = `${base}-${formatScreenshotTimestamp()}.jpg`;
+      const url = URL.createObjectURL(blob);
+      const link = this.document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      this.setStatus(`Saved ${filename}.`);
+    } catch (error) {
+      this.setStatus(error.message);
+    }
+  }
+
   setControlsEnabled(enabled) {
     for (const control of [
       this.openFileButton,
@@ -240,6 +261,7 @@ export class TruckViewerApp {
       this.toggleSidebarButton,
       this.clearTempButton,
       this.resetCameraButton,
+      this.saveScreenshotButton,
       this.backgroundColor,
       this.lightPosition,
       this.toggleSceneLighting,
@@ -339,6 +361,21 @@ function formatVec3(vec) {
     return "<none>";
   }
   return `${vec.x ?? 0}, ${vec.y ?? 0}, ${vec.z ?? 0}`;
+}
+
+function sanitizeFilename(value) {
+  return String(value)
+    .trim()
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "jstruckviewer";
+}
+
+function formatScreenshotTimestamp() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
 // Hosting helper:

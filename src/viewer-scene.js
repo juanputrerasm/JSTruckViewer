@@ -9,7 +9,8 @@ export class ViewerScene {
     this.scene.background = new THREE.Color(this.backgroundColor);
     this.camera = new THREE.PerspectiveCamera(48, 1, 0.1, 10000);
     this.camera.position.set(0, 18, 34);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // preserveDrawingBuffer keeps the last rendered frame readable for JPG export.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setSize(container.clientWidth || 640, container.clientHeight || 480);
@@ -281,6 +282,34 @@ export class ViewerScene {
 
   resetCamera() {
     this.fitToContent();
+  }
+
+  // Captures the current Three.js frame as JPEG using the browser canvas API (no third-party library).
+  async saveScreenshotJpeg() {
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+
+    const sourceCanvas = this.renderer.domElement;
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = sourceCanvas.width;
+    exportCanvas.height = sourceCanvas.height;
+    const context = exportCanvas.getContext("2d");
+    if (!context) {
+      throw new Error("Unable to create screenshot canvas.");
+    }
+
+    // Composite over the scene background so transparent WebGL pixels match the viewer.
+    context.fillStyle = this.backgroundColor;
+    context.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    context.drawImage(sourceCanvas, 0, 0);
+
+    return await new Promise((resolve, reject) => {
+      exportCanvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("JPEG export failed."))),
+        "image/jpeg",
+        0.92
+      );
+    });
   }
 
   resize() {

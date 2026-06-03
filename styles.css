@@ -126,6 +126,16 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-footer button {
+  width: 100%;
+}
+
 .panel h2,
 .warnings-panel h2 {
   font-size: 11px;
