@@ -1,7 +1,7 @@
 import { basenameWithoutExtension, joinPath, opfsDisplayPath } from "./shared/path-utils.js";
 import { removePath, resetSessionFolder, writeBytesToFile, writeStreamToFile } from "./shared/opfs.js";
 import { WorkerClient } from "./worker-client.js";
-import { extractFirstPodFromZipBytes } from "./zip-utils.js";
+import { extractPodEntriesFromZipBytes } from "./zip-utils.js";
 
 const workerClient = new WorkerClient(new URL("./worker/truck-worker.js", import.meta.url));
 
@@ -54,24 +54,33 @@ export async function stagePodFromUrl(url) {
 }
 
 export async function loadTruckFromStaged(staged, trkNormalizedName) {
-  const { sessionId, opfsPodPath, podIndex, sourceMode, sourceLabel } = staged;
+  const selected = findStagedTruckEntry(staged, trkNormalizedName);
+  const { sessionId, opfsPodPath, podIndex, sourceMode, sourceLabel } = selected;
   const manifestInfo = await workerClient.call("extractTruckManifestByName", {
     sessionId,
     opfsPodPath,
     podIndex,
-    normalizedName: trkNormalizedName
+    normalizedName: selected.normalizedName,
+    extractionScope: selected.podId
   });
-  return await hydrateWithManifest(sessionId, opfsPodPath, podIndex, manifestInfo, { sourceMode, sourceLabel });
+  return await hydrateWithManifest(sessionId, opfsPodPath, podIndex, manifestInfo, {
+    sourceMode,
+    sourceLabel,
+    podLabel: selected.podLabel,
+    trkKey: selected.trkKey,
+    extractionScope: selected.podId
+  });
 }
 
 export async function describeTruckEntries(staged) {
-  const { sessionId, opfsPodPath, podIndex } = staged;
   return await Promise.all((staged.trkEntries ?? []).map(async (entry) => {
+    const pod = findStagedPod(staged, entry.podId);
     const manifestInfo = await workerClient.call("extractTruckManifestByName", {
-      sessionId,
-      opfsPodPath,
-      podIndex,
-      normalizedName: entry.normalizedName
+      sessionId: staged.sessionId,
+      opfsPodPath: pod.opfsPodPath,
+      podIndex: pod.podIndex,
+      normalizedName: entry.normalizedName,
+      extractionScope: entry.podId
     });
     const manifest = await parseTruckManifest(manifestInfo.opfsTrkPath);
     return {
@@ -95,7 +104,8 @@ export async function assembleTruck(session, manifest) {
     opfsPodPath: session.opfsPodPath,
     podIndex: session.podIndex,
     manifest,
-    manifestPath: session.manifestPath
+    manifestPath: session.manifestPath,
+    extractionScope: session.extractionScope
   });
 }
 
@@ -121,7 +131,7 @@ async function prepareFreshSession() {
 async function hydrateWithManifest(sessionId, opfsPodPath, podIndex, manifestInfo, metadata) {
   const manifest = await parseTruckManifest(manifestInfo.opfsTrkPath);
   const assembly = await assembleTruck(
-    { sessionId, opfsPodPath, podIndex, manifestPath: manifestInfo.opfsTrkPath },
+    { sessionId, opfsPodPath, podIndex, manifestPath: manifestInfo.opfsTrkPath, extractionScope: metadata.extractionScope },
     manifest
   );
   return {
@@ -130,6 +140,9 @@ async function hydrateWithManifest(sessionId, opfsPodPath, podIndex, manifestInf
     opfsPodDisplayPath: opfsDisplayPath(opfsPodPath),
     sourceMode: metadata.sourceMode,
     sourceLabel: metadata.sourceLabel,
+    podLabel: metadata.podLabel,
+    trkKey: metadata.trkKey,
+    extractionScope: metadata.extractionScope,
     podIndex,
     manifest,
     manifestPath: manifestInfo.opfsTrkPath,
@@ -164,27 +177,87 @@ async function stagePodResponse(sessionId, response, fileName) {
 }
 
 async function stageZipBytes(sessionId, bytes, zipName) {
-  // ZIP loading is still fully client-side: extract the first POD from the fetched/uploaded ZIP,
-  // then stage that POD into OPFS so the worker can index it normally.
-  const { podBytes, podEntryName } = await extractFirstPodFromZipBytes(bytes, zipName);
-  const podFileName = podNameFromZipEntry(zipName, podEntryName);
-  const sourcePath = joinPath("sessions", sessionId, "source", podFileName);
-  await writeBytesToFile(sourcePath, podBytes);
-  return finalizeStagedPod(sessionId, sourcePath, podEntryName, "zip", zipName);
+  // ZIP loading is still fully client-side: stage each POD entry into OPFS so the
+  // worker can index every truck manifest, even when the ZIP is a multi-POD pack.
+  const podEntries = await extractPodEntriesFromZipBytes(bytes, zipName);
+  const stagedPods = [];
+  for (const [index, podEntry] of podEntries.entries()) {
+    const podFileName = podNameFromZipEntry(zipName, podEntry.podEntryName);
+    const sourcePath = joinPath("sessions", sessionId, "source", `${index + 1}-${podFileName}`);
+    await writeBytesToFile(sourcePath, podEntry.podBytes);
+    stagedPods.push({
+      opfsPodPath: sourcePath,
+      podLabel: podEntry.podEntryName
+    });
+  }
+  return finalizeStagedPods(sessionId, stagedPods, "zip", zipName);
 }
 
 async function finalizeStagedPod(sessionId, sourcePath, podLabel, containerType, containerLabel = null) {
-  const podIndex = await indexPod(sourcePath);
-  const trkEntries = await workerClient.call("listTruckManifests", { podIndex });
+  return finalizeStagedPods(sessionId, [{ opfsPodPath: sourcePath, podLabel }], containerType, containerLabel);
+}
+
+async function finalizeStagedPods(sessionId, stagedPods, containerType, containerLabel = null) {
+  const pods = [];
+  const trkEntries = [];
+  for (const [index, stagedPod] of stagedPods.entries()) {
+    const podIndex = await indexPod(stagedPod.opfsPodPath);
+    const podId = `pod-${index + 1}`;
+    const podTrkEntries = await workerClient.call("listTruckManifests", { podIndex });
+    pods.push({
+      podId,
+      opfsPodPath: stagedPod.opfsPodPath,
+      podIndex,
+      podLabel: stagedPod.podLabel
+    });
+    trkEntries.push(...podTrkEntries.map((entry) => ({
+      ...entry,
+      podId,
+      podLabel: stagedPod.podLabel,
+      trkKey: makeTruckKey(podId, entry.normalizedName)
+    })));
+  }
+  const firstPod = pods[0] ?? {};
   return {
     sessionId,
-    opfsPodPath: sourcePath,
-    podIndex,
+    opfsPodPath: firstPod.opfsPodPath,
+    podIndex: firstPod.podIndex,
+    pods,
     trkEntries,
-    podLabel,
+    podLabel: firstPod.podLabel,
     containerType,
     containerLabel
   };
+}
+
+function findStagedTruckEntry(staged, trkKeyOrNormalizedName) {
+  const selected = staged.trkEntries?.find((entry) => entry.trkKey === trkKeyOrNormalizedName)
+    ?? staged.trkEntries?.find((entry) => entry.normalizedName === trkKeyOrNormalizedName);
+  if (!selected) {
+    throw new Error(`TRK entry not found in staged archive: ${trkKeyOrNormalizedName}`);
+  }
+  const pod = findStagedPod(staged, selected.podId);
+  return {
+    ...selected,
+    sessionId: staged.sessionId,
+    sourceMode: staged.sourceMode,
+    sourceLabel: staged.sourceLabel,
+    opfsPodPath: pod.opfsPodPath,
+    podIndex: pod.podIndex,
+    podLabel: pod.podLabel
+  };
+}
+
+function findStagedPod(staged, podId) {
+  const pod = staged.pods?.find((entry) => entry.podId === podId) ?? staged.pods?.[0];
+  if (!pod) {
+    throw new Error("No staged POD is available.");
+  }
+  return pod;
+}
+
+function makeTruckKey(podId, normalizedName) {
+  return `${podId}:${normalizedName}`;
 }
 
 function isZipName(name) {

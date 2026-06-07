@@ -17,10 +17,10 @@ self.addEventListener("message", async (event) => {
         result = findAllTruckManifests(payload.podIndex);
         break;
       case "extractPrimaryTruckManifest":
-        result = await extractPrimaryTruckManifest(payload.sessionId, payload.opfsPodPath, payload.podIndex);
+        result = await extractPrimaryTruckManifest(payload.sessionId, payload.opfsPodPath, payload.podIndex, payload.extractionScope);
         break;
       case "extractTruckManifestByName":
-        result = await extractTruckManifestByName(payload.sessionId, payload.opfsPodPath, payload.podIndex, payload.normalizedName);
+        result = await extractTruckManifestByName(payload.sessionId, payload.opfsPodPath, payload.podIndex, payload.normalizedName, payload.extractionScope);
         break;
       case "parseTruckManifest":
         result = parseTruckManifestText(await readTextFile(payload.opfsTrkPath));
@@ -37,27 +37,27 @@ self.addEventListener("message", async (event) => {
   }
 });
 
-async function extractPrimaryTruckManifest(sessionId, opfsPodPath, podIndex) {
+async function extractPrimaryTruckManifest(sessionId, opfsPodPath, podIndex, extractionScope = "") {
   const entry = findFirstTruckManifest(podIndex);
   if (!entry) {
     throw new Error("No TRUCK/*.TRK manifest was found in the POD.");
   }
-  const outputPath = joinPath("sessions", sessionId, "extracted", entry.normalizedName);
+  const outputPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
   await extractPodEntry(opfsPodPath, entry, outputPath);
   return { opfsTrkPath: outputPath, entry };
 }
 
-async function extractTruckManifestByName(sessionId, opfsPodPath, podIndex, normalizedName) {
+async function extractTruckManifestByName(sessionId, opfsPodPath, podIndex, normalizedName, extractionScope = "") {
   const entry = podIndex.entries.find((e) => e.normalizedName === normalizedName);
   if (!entry) {
     throw new Error(`TRK entry not found in POD: ${normalizedName}`);
   }
-  const outputPath = joinPath("sessions", sessionId, "extracted", entry.normalizedName);
+  const outputPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
   await extractPodEntry(opfsPodPath, entry, outputPath);
   return { opfsTrkPath: outputPath, entry };
 }
 
-async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manifestPath }) {
+async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manifestPath, extractionScope = "" }) {
   const warnings = [];
   const extractedFiles = [];
 
@@ -69,8 +69,8 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
   const axleEntry = resolveSingleModelEntry(podIndex, manifest.axleModelName, "axle", warnings);
   const wheelPlan = resolveWheelEntries(podIndex, manifest.tireModelBaseName, warnings);
 
-  const body = await decodeExtractedModel(bodyEntry, "body", sessionId, opfsPodPath, extractedFiles);
-  const axle = await decodeExtractedModel(axleEntry, "axle", sessionId, opfsPodPath, extractedFiles);
+  const body = await decodeExtractedModel(bodyEntry, "body", sessionId, opfsPodPath, extractionScope, extractedFiles);
+  const axle = await decodeExtractedModel(axleEntry, "axle", sessionId, opfsPodPath, extractionScope, extractedFiles);
 
   const wheels = [];
   const wheelKeys = [
@@ -81,7 +81,7 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
   ];
   for (const wheelKey of wheelKeys) {
     const entry = wheelPlan.mapping[wheelKey] ?? null;
-    const wheelModel = await decodeExtractedModel(entry, wheelKey, sessionId, opfsPodPath, extractedFiles);
+    const wheelModel = await decodeExtractedModel(entry, wheelKey, sessionId, opfsPodPath, extractionScope, extractedFiles);
     wheels.push({
       key: wheelKey,
       position: manifest.wheelAnchors[wheelKey] ?? { x: 0, y: 0, z: 0 },
@@ -111,13 +111,13 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       continue;
     }
     const actEntry = findArtEntry(podIndex, name, ".ACT");
-    const rawPath = joinPath("sessions", sessionId, "extracted", rawEntry.normalizedName);
+    const rawPath = extractedPath(sessionId, extractionScope, rawEntry.normalizedName);
     await extractPodEntry(opfsPodPath, rawEntry, rawPath);
     extractedFiles.push(rawPath);
     const rawBytes = new Uint8Array(await (await readFile(rawPath)).arrayBuffer());
     let actBytes = null;
     if (actEntry) {
-      const actPath = joinPath("sessions", sessionId, "extracted", actEntry.normalizedName);
+      const actPath = extractedPath(sessionId, extractionScope, actEntry.normalizedName);
       await extractPodEntry(opfsPodPath, actEntry, actPath);
       extractedFiles.push(actPath);
       actBytes = new Uint8Array(await (await readFile(actPath)).arrayBuffer());
@@ -489,15 +489,19 @@ function pickWheelCandidate(candidates, suffix) {
   return candidates.find((entry) => entry.title.toUpperCase().endsWith(upperSuffix)) ?? null;
 }
 
-async function decodeExtractedModel(entry, label, sessionId, opfsPodPath, extractedFiles) {
+async function decodeExtractedModel(entry, label, sessionId, opfsPodPath, extractionScope, extractedFiles) {
   if (!entry) {
     return null;
   }
-  const outputPath = joinPath("sessions", sessionId, "extracted", entry.normalizedName);
+  const outputPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
   await extractPodEntry(opfsPodPath, entry, outputPath);
   extractedFiles.push(outputPath);
   const bytes = new Uint8Array(await (await readFile(outputPath)).arrayBuffer());
   const model = decodeBinModel(bytes, entry.title);
   model.partKey = label;
   return model;
+}
+
+function extractedPath(sessionId, extractionScope, normalizedName) {
+  return joinPath("sessions", sessionId, "extracted", extractionScope, normalizedName);
 }

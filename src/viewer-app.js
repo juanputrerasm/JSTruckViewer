@@ -121,12 +121,12 @@ export class TruckViewerApp {
     }
     this.stagedSession = staged;
     const firstEntry = staged.trkEntries[0];
-    this.currentSession = await loadTruckFromStaged(staged, firstEntry.normalizedName);
+    this.currentSession = await loadTruckFromStaged(staged, firstEntry.trkKey);
     this.renderSession({ fitCamera: true });
     if (staged.trkEntries.length > 1) {
       const pickerEntries = await describeTruckEntries(staged);
-      this.renderTruckPicker(pickerEntries, firstEntry.normalizedName);
-      this.setStatus(`${successMessage} Found ${staged.trkEntries.length} trucks in this POD.`);
+      this.renderTruckPicker(pickerEntries, firstEntry.trkKey);
+      this.setStatus(`${successMessage} Found ${formatTruckCount(staged.trkEntries.length)} across ${formatPodCount(staged.pods?.length ?? 1)}.`);
     } else {
       this.hideTruckPicker();
       this.setStatus(successMessage);
@@ -134,14 +134,16 @@ export class TruckViewerApp {
   }
 
   async handleTruckSelection() {
-    const normalizedName = this.truckSelect.value;
-    if (!normalizedName || !this.stagedSession) {
+    const trkKey = this.truckSelect.value;
+    if (!trkKey || !this.stagedSession) {
       return;
     }
-    await this.withLoading(`Loading ${normalizedName}...`, async () => {
-      this.currentSession = await loadTruckFromStaged(this.stagedSession, normalizedName);
+    const selectedEntry = this.stagedSession.trkEntries.find((entry) => entry.trkKey === trkKey);
+    const label = selectedEntry?.podLabel ? `${selectedEntry.podLabel} / ${selectedEntry.normalizedName}` : trkKey;
+    await this.withLoading(`Loading ${label}...`, async () => {
+      this.currentSession = await loadTruckFromStaged(this.stagedSession, trkKey);
       this.renderSession({ fitCamera: false });
-      this.setStatus(`Loaded ${normalizedName}.`);
+      this.setStatus(`Loaded ${label}.`);
     });
   }
 
@@ -165,11 +167,13 @@ export class TruckViewerApp {
   }
 
   renderTruckPicker(entries, selectedNormalizedName = "") {
+    const showPodLabel = new Set(entries.map((entry) => entry.podId)).size > 1;
     this.truckSelect.innerHTML = entries
       .map((e) => {
-        const label = e.manifestTruckName ? `${e.title} (${e.manifestTruckName})` : e.title;
-        const selected = e.normalizedName === selectedNormalizedName ? " selected" : "";
-        return `<option value="${escapeHtml(e.normalizedName)}"${selected}>${escapeHtml(label)}</option>`;
+        const title = e.manifestTruckName ? `${e.title} (${e.manifestTruckName})` : e.title;
+        const label = showPodLabel ? `${e.podLabel} / ${title}` : title;
+        const selected = e.trkKey === selectedNormalizedName ? " selected" : "";
+        return `<option value="${escapeHtml(e.trkKey)}"${selected}>${escapeHtml(label)}</option>`;
       })
       .join("");
     this.truckPickerPanel.hidden = false;
@@ -351,9 +355,17 @@ function escapeHtml(value) {
 
 function buildLoadedMessage(staged, sourceLabel) {
   if (staged?.containerType === "zip") {
-    return `Loaded ${staged.podLabel} from ${sourceLabel}.`;
+    return `Loaded ${formatPodCount(staged.pods?.length ?? 1)} from ${sourceLabel}.`;
   }
   return `Loaded ${sourceLabel}.`;
+}
+
+function formatTruckCount(count) {
+  return `${count} ${count === 1 ? "truck" : "trucks"}`;
+}
+
+function formatPodCount(count) {
+  return `${count} ${count === 1 ? "POD" : "PODs"}`;
 }
 
 function formatVec3(vec) {
