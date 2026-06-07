@@ -36,15 +36,15 @@ Live deployment on GitHub Pages:
 
 https://juanputrerasm.github.io/JSTruckViewer/
 
-Load a truck by clicking **Open POD/ZIP from disk** and selecting a `.POD` file or a `.ZIP` that contains one or more POD files, or paste a CORS-enabled URL into the URL field. When a ZIP is loaded, the viewer extracts the first `.POD` entry and continues with the normal truck manifest rules.
+Load a truck by clicking **Open POD/ZIP from disk** and selecting a `.POD` file or a `.ZIP` that contains one or more POD files, or paste a CORS-enabled URL into the URL field. When a ZIP is loaded, the viewer extracts every `.POD` entry and lists the truck manifests from all staged PODs.
 
 ---
 
 ## Features
 
 - Load `.POD` files from local disk or remote URL
-- Load `.ZIP` files from local disk or remote URL by extracting the first `.POD` entry
-- Multi-truck POD support, pick any truck from a dropdown when a POD contains multiple `TRUCK/*.TRK` manifests
+- Load `.ZIP` files from local disk or remote URL by extracting every `.POD` entry
+- Multi-POD ZIP and multi-truck POD support, pick any truck from a dropdown when an archive contains multiple `TRUCK/*.TRK` manifests
 - OPFS-backed per-session extraction (no files leak between sessions)
 - `TRUCK/*.TRK` manifest parsing (truck name, model references, wheel anchors, scrape points)
 - Static BIN mesh decoding
@@ -96,7 +96,7 @@ Notes:
 - Root-relative URLs that start with `/` are usually the clearest choice for webmasters.
 - Remote loading still uses browser `fetch()`, so cross-origin URLs must allow CORS.
 
-When a ZIP is loaded, the viewer extracts the first `.POD` entry in the archive, stages it in OPFS, and then loads truck manifests from that staged POD.
+When a ZIP is loaded, the viewer extracts every `.POD` entry in the archive, stages each POD in OPFS, and then loads truck manifests from all staged PODs.
 
 ---
 
