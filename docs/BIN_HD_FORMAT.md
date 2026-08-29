@@ -229,4 +229,3 @@ Every sampled RGB component is decoded as `component * 2 - 1`. Export **DirectX 
 - [MTM2 Engine Content Limits](https://www.mtm2.com/~mtmg/misc/ENGINE_LIMITS.md)
 - [Authoring HD art](https://www.mtm2.com/~mtmg/misc/AUTHORING_HD_ART.md)
 - [glTF extras specification](https://www.mtm2.com/~mtmg/misc/GLTF_EXTRAS_SPEC.md)
-

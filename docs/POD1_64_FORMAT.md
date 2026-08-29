@@ -113,4 +113,3 @@ The upstream engine notes describe the production extension as “64-byte names,
 
 - [MTM2 Engine Content Limits](https://www.mtm2.com/~mtmg/misc/ENGINE_LIMITS.md) — extended-directory design and name budgets
 - The engine notes refer to `CPOD_LONG_NAMES.md`; it was not available at the published `/~mtmg/misc/` location when this document was written.
-

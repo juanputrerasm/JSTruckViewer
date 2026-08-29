@@ -188,4 +188,3 @@ A real TRK normally contains scrape points, sound references, and possibly light
 
 - [MTM2 Beta Patch 0.41/0.42 truck-authoring instructions](https://www.mtm2.com/forum/phpBB3/viewtopic.php?p=56927)
 - The distributed `Beta0.42.zip` `EXAMPLE.TRK`, used to verify field ordering and the `200,200,400` example
-
