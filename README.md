@@ -1,117 +1,149 @@
-# JS Truck Viewer
+# JSTruckViewer
 
-A simple, pure browser javascript 3D viewer for **Monster Truck Madness 2** (MTM2) trucks. Drop in a POD or ZIP file from your local storage, or point it at a CORS-enabled URL, and the viewer decodes the truck mesh, textures, and wheel placement entirely client-side.
+[![JavaScript](https://img.shields.io/badge/JavaScript-ES%20modules-F7DF1E?logo=javascript&logoColor=000)](https://developer.mozilla.org/docs/Web/JavaScript)
+[![Three.js](https://img.shields.io/badge/Three.js-r169-000?logo=threedotjs)](https://threejs.org/)
+[![Platform](https://img.shields.io/badge/platform-web-blue)](https://developer.mozilla.org/docs/Web)
+[![GitHub Pages](https://img.shields.io/badge/demo-GitHub%20Pages-222?logo=github)](https://juanputrerasm.github.io/JSTruckViewer/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
----
+**A browser-based 3D truck viewer for Monster Truck Madness 2.**
 
-## Stack
+JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manifests, decodes the referenced BIN models and textures, and assembles a complete truck in Three.js. All archive processing happens locally in the browser.
 
-| Layer | Technology |
-|---|---|
-| 3D rendering | [Three.js](https://threejs.org/) v0.169 (via CDN import map) |
-| Controls | Three.js `OrbitControls` |
-| Asset storage | [OPFS](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) (Origin Private File System) |
-| Heavy parsing | [Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) |
-| Module system | Native ES modules (no bundler required) |
-| ZIP extraction | [fflate](https://www.npmjs.com/package/fflate) v0.8.2 (MIT) |
-| Styling | Vanilla CSS |
+**Live application:** [Open JSTruckViewer on GitHub Pages](https://juanputrerasm.github.io/JSTruckViewer/)
 
----
-
-## Getting started
-
-OPFS and module workers require a proper HTTP origin, `file://` won't work. Serve the folder locally:
-
-```bash
-python3 -m http.server 8080
-```
-
-Then open:
-
-```
-http://localhost:8080/
-```
-
-Live deployment on GitHub Pages:
-
-https://juanputrerasm.github.io/JSTruckViewer/
-
-Load a truck by clicking **Open POD/ZIP from disk** and selecting a `.POD` file or a `.ZIP` that contains one or more POD files, or paste a CORS-enabled URL into the URL field. When a ZIP is loaded, the viewer extracts every `.POD` entry and lists the truck manifests from all staged PODs.
+![JSTruckViewer displaying a fully assembled MTM2 truck](docs/screenshot.jpg)
 
 ---
 
 ## Features
 
-- Load `.POD` files from local disk or remote URL
-- Load `.ZIP` files from local disk or remote URL by extracting every `.POD` entry
-- Multi-POD ZIP and multi-truck POD support, pick any truck from a dropdown when an archive contains multiple `TRUCK/*.TRK` manifests
-- OPFS-backed per-session extraction (no files leak between sessions)
-- `TRUCK/*.TRK` manifest parsing (truck name, model references, wheel anchors, scrape points)
-- Static BIN mesh decoding
-- `RAW` + `ACT` texture decoding with fallback palette support
-- Full truck assembly: body, dual axle bars, four independently positioned wheels, scrape-point markers
-- Viewer controls: texture toggle, wireframe toggle, wheel visibility, axle bar visibility, camera reset
+- **POD and ZIP loading** — open a local archive, paste a URL, or autoload one through a query parameter.
+- **Multi-truck archives** — discover every `TRUCK/*.TRK` manifest and switch trucks without reopening the archive.
+- **Multi-POD ZIP packs** — stage and search all POD members contained in a ZIP.
+- **Complete truck assembly** — render the body, four wheels, axles, axle bars, shocks, driveshaft, lights, and scrape points.
+- **Interactive inspection** — orbit, pan, zoom, reset the camera, change lighting and background, toggle parts, textures, smoothing, wireframe, and gravity.
+- **Screenshot export** — save the current viewport as a JPEG.
+- **Client-side operation** — archives and extracted assets remain in temporary browser storage.
 
----
+## Supported content
 
-## Project structure
+| Content | Support |
+|---|---|
+| POD1 | Original Terminal Reality POD directory layout |
+| POD1-64 (Extended POD1) | POD1-compatible layout with 64-byte entry names |
+| ZIP | One or more POD archives in a single pack |
+| TRK | Truck manifest, component references, anchors, lights, and scrape points |
+| BIN | Classic and updated MTM2 model records |
+| RAW + ACT | Legacy paletted textures |
+| PNG and TGA | High-definition diffuse and normal textures |
 
+“Extended POD1” is not an official new POD version. It identifies the POD1-compatible directory layout whose name field is widened from 32 to 64 bytes.
+
+## Modern MTM2 (Community Patch 3) rendering
+
+The viewer supports the updated BIN texture and material records, including 64-byte texture names, polygon material assignments, reflection and color blocks, and material parameters. Diffuse texture lookup uses `.PNG`, then `.TGA`, then `.RAW`.
+
+Normal maps use the engine's DirectX/green-down convention. RGB is interpreted directly as tangent X, bitangent Y, and surface Z after the standard `value * 2 - 1` decode. Alpha is unused; roughness is not read from the texture, and specular strength is a material value.
+
+Updated four-wheel sets such as `16FL`, `16FR`, `16RL`, and `16RR` are selected when present. Legacy left/right wheel naming remains supported as a fallback.
+
+## Requirements
+
+- A modern browser with JavaScript modules, Web Workers, WebGL, and Origin Private File System support
+- An HTTP or HTTPS origin; the application cannot run correctly from `file://`
+- Network access to the Three.js and fflate CDN modules
+
+## Getting started
+
+### Use the hosted application
+
+1. Open [JSTruckViewer on GitHub Pages](https://juanputrerasm.github.io/JSTruckViewer/).
+2. Choose **Open POD/ZIP from disk**, or paste an archive URL and choose **Open from URL**.
+3. Select a truck when the archive contains more than one manifest.
+4. Use the mouse or touch controls to inspect the assembled truck.
+
+> [!NOTE]
+> Remote archives must be served over HTTP or HTTPS. Cross-origin servers must also allow the browser request through CORS.
+
+### Run locally
+
+Clone the repository and serve its root directory with any static HTTP server:
+
+```bash
+git clone https://github.com/juanputrerasm/JSTruckViewer.git
+cd JSTruckViewer
+python3 -m http.server 8080
 ```
-index.html
-styles.css
+
+Then open <http://localhost:8080/>. There is no build step and no package installation.
+
+## Viewer controls
+
+| Control | Action |
+|---|---|
+| Left drag / one-finger drag | Orbit the camera |
+| Right drag / two-finger drag | Pan the camera |
+| Mouse wheel / pinch | Zoom |
+| Left / Right Arrow | Strafe the camera left / right |
+| Reset view | Fit the current truck in the camera |
+| Viewer toggles | Show, hide, or change individual rendering features and truck parts |
+| Save screenshot to JPG | Download the current viewport |
+
+## URL integration
+
+Use `file` or `url` to autoload a POD or ZIP archive:
+
+```text
+https://juanputrerasm.github.io/JSTruckViewer/?file=https%3A%2F%2Fexample.com%2Ftruck.pod
+https://juanputrerasm.github.io/JSTruckViewer/?url=%2Fdownloads%2Ftruck-pack.zip
+```
+
+Relative paths are resolved against the viewer page. If both parameters are present, `file` takes precedence. The same archive-loading path is used by the URL field and autoload links.
+
+## Architecture
+
+| Component | Role |
+|---|---|
+| ES modules | Application controller, archive staging, and scene management |
+| Module Web Worker | POD indexing, TRK parsing, BIN decoding, and truck assembly |
+| OPFS | Isolated temporary archive and extracted-asset storage |
+| Three.js r169 | Rendering, lighting, camera controls, and screenshot capture |
+| fflate 0.8.2 | ZIP extraction |
+
+```text
 src/
-  main.js              - entry point
-  viewer-app.js        - UI controller
-  viewer-scene.js      - Three.js scene, camera, part groups
-  api.js               - staged POD loading orchestration
-  worker-client.js     - promise wrapper around the Web Worker
-  shared/
-    opfs.js            - OPFS read/write helpers
-    path-utils.js      - archive path normalization
-  worker/
-    truck-worker.js    - worker message handler
-    pod-format.js      - POD archive indexing and entry extraction
-    trk-parser.js      - TRK manifest text parser
-    bin-decoder.js     - BIN mesh decoder (vertices, polygons, UVs)
-    texture-decoder.js - RAW/ACT texture decoder to RGBA
-    binary-reader.js   - low-level typed binary reader
+├── api.js                  Archive staging and worker API
+├── viewer-app.js           User-interface controller
+├── viewer-scene.js         Three.js scene and truck rendering
+├── worker-client.js        Promise wrapper for the module worker
+├── shared/                 OPFS and texture helpers
+└── worker/                 POD, TRK, BIN, texture, and image decoders
 ```
-
----
-
-## Loading From URLs
-
-The viewer can load archives from the page itself, or from query parameters. This makes it easy to host `JSTruckViewer` on a site and point it at a truck archive in another folder on the same domain.
-
-Examples:
-
-- Root-relative path on the same domain: `/JSTruckViewer/?file=/resources/trucks/truck.zip`
-- Relative path from the viewer folder: `/JSTruckViewer/?file=../archives/truck.pod`
-- Full URL: `/JSTruckViewer/?url=https://example.com/resources/trucks/truck.zip`
-
-Notes:
-
-- `?file=` and `?url=` are both supported.
-- Relative URLs are resolved from the viewer page location.
-- Root-relative URLs that start with `/` are usually the clearest choice for webmasters.
-- Remote loading still uses browser `fetch()`, so cross-origin URLs must allow CORS.
-
-When a ZIP is loaded, the viewer extracts every `.POD` entry in the archive, stages each POD in OPFS, and then loads truck manifests from all staged PODs.
-
----
 
 ## Known limitations
 
-- No truck lighting, audio playback, or physics damage.
-- Wheel variant selection is heuristic, when a prefix matches multiple BIN files (for example `RED8`, `RED10`, `RED16`) the highest-numbered, highest-poly variant is used for all four wheel positions.
-- Must be served over `http://localhost` or HTTPS; `file://` is not supported.
+- The viewer does not simulate MTM2 vehicle physics or animation.
+- Some TRK directives are parsed for diagnostics but do not affect rendering.
+- Missing or ambiguous wheel assets require naming heuristics and may produce warnings.
+- Browser image decoding availability depends on the browser's worker APIs.
+- Material rendering approximates the updated MTM2 renderer in Three.js rather than reproducing it exactly.
 
----
+## Related projects
 
-## License
+- [JSPod](https://github.com/juanputrerasm/JSPod) — browser-based POD archive and individual-asset viewer.
+- [KPodman](https://github.com/juanputrerasm/KPodman) — desktop POD archive manager.
 
-This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE).
+## Format documentation
 
-The project also uses the following third-party dependency:
+- [POD1-64 / Extended POD1](docs/POD1_64_FORMAT.md)
+- [BIN HD / Extended BIN](docs/BIN_HD_FORMAT.md)
+- [MTM2.1 / TRK 2.1](docs/TRK_2_1_FORMAT.md)
 
-- `fflate` - MIT License
+## Credits and license
+
+Developed by **Juan Pablo Utreras** for the Monster Truck Madness community.
+
+Released under the [Apache License 2.0](LICENSE).
+
+Monster Truck Madness and Terminal Reality are trademarks of their respective owners. This project is an independent community tool and is not affiliated with or endorsed by them.

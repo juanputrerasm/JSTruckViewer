@@ -19,6 +19,12 @@ export class ViewerScene {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.target.set(0, 2, 0);
+    this.renderer.domElement.title = "Drag to orbit, scroll to zoom, and press Left/Right Arrow to strafe";
+    this.removeStrafeControls = installHorizontalCameraStrafe(
+      this.camera,
+      this.controls,
+      () => this.renderer.domElement.isConnected
+    );
 
     this.sceneLightingEnabled = false;
     this.smoothTexturesEnabled = false;
@@ -87,7 +93,8 @@ export class ViewerScene {
     for (const texture of assembly.textures ?? []) {
       textureMap.set(normalizeTextureKey(texture.name), {
         opaque: createDataTexture(texture, "opaque", this.smoothTexturesEnabled),
-        cutout: createDataTexture(texture, "cutout", this.smoothTexturesEnabled)
+        cutout: createDataTexture(texture, "cutout", this.smoothTexturesEnabled),
+        normal: texture.normal ? createDataTexture(texture.normal, "normal", this.smoothTexturesEnabled) : null
       });
     }
     // The gravity toggle lowers the chassis only. Wheels and axle-linked parts stay at ride height,
@@ -108,7 +115,9 @@ export class ViewerScene {
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.positions), 3));
         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.normals), 3));
         const textureEntry = textureMap.get(normalizeTextureKey(meshData.textureName)) ?? null;
-        const diffuseMap = textureEntry ? (meshData.transparent ? textureEntry.cutout : textureEntry.opaque) : null;
+        const needsAlpha = !!meshData.transparent || !!(meshData.material?.flags & (0x0004 | 0x0008 | 0x2000));
+        const diffuseMap = textureEntry ? (needsAlpha ? textureEntry.cutout : textureEntry.opaque) : null;
+        const normalMap = textureEntry?.normal ?? null;
         if (meshData.uvs?.length) {
           geometry.setAttribute("uv", new THREE.Float32BufferAttribute(buildDisplayUvs(meshData.uvs, diffuseMap), 2));
         }
@@ -119,9 +128,30 @@ export class ViewerScene {
           map: diffuseMap,
           side: THREE.BackSide,
           transparent: !!meshData.transparent,
-          alphaTest: meshData.transparent ? 0.5 : 0
+          alphaTest: meshData.transparent ? 0.5 : 0,
+          materialData: meshData.material,
+          material2: meshData.material2,
+          normalMap
         });
         group.add(new THREE.Mesh(geometry, material));
+        if (meshData.material?.flags & 0x2000) {
+          const solidPass = this.createSurfaceMaterial({
+            color: diffuseMap ? 0xffffff : (meshData.color ?? 0x9b9b9b),
+            map: diffuseMap,
+            side: THREE.BackSide,
+            materialData: {
+              ...meshData.material,
+              flags: (meshData.material.flags | 0x0008) & ~(0x0004 | 0x0100 | 0x2000),
+              baseAlpha: 1
+            },
+            material2: meshData.material2,
+            normalMap
+          });
+          solidPass.depthWrite = true;
+          solidPass.polygonOffset = true;
+          solidPass.polygonOffsetFactor = -1;
+          group.add(new THREE.Mesh(geometry, solidPass));
+        }
       }
       this.rootGroup.add(group);
       this.partGroups.set(partKey, group);
@@ -395,18 +425,36 @@ export class ViewerScene {
     }
   }
 
-  createSurfaceMaterial({ color, map = null, side = THREE.FrontSide, transparent = false, alphaTest = 0 }) {
+  createSurfaceMaterial({ color, map = null, side = THREE.FrontSide, transparent = false, alphaTest = 0, materialData = null, material2 = null, normalMap = null }) {
+    const flags = materialData?.flags ?? 0;
+    const tint = materialData && (flags & 0x0400) ? materialData.tint : [1, 1, 1];
+    const resolvedColor = map ? multiplyColor(color, tint) : color;
+    const resolvedTransparent = materialData ? !!(flags & 0x0004) : transparent;
+    const resolvedAlphaTest = materialData && (flags & 0x0008)
+      ? ((flags & 0x0800) ? clamp01((materialData.alphaRef ?? 128) / 255) : 0.5)
+      : alphaTest;
     const materialProps = {
-      color,
+      color: resolvedColor,
       map,
       wireframe: false,
-      side,
-      transparent,
-      alphaTest
+      side: materialData && (flags & 0x0080) ? THREE.DoubleSide : side,
+      transparent: resolvedTransparent,
+      opacity: resolvedTransparent ? clamp01(materialData?.baseAlpha ?? 1) : 1,
+      alphaTest: resolvedAlphaTest,
+      depthWrite: !(flags & 0x0100),
+      blending: flags & 0x0010 ? THREE.AdditiveBlending : THREE.NormalBlending
     };
-    return this.sceneLightingEnabled
-      ? new THREE.MeshLambertMaterial(materialProps)
-      : new THREE.MeshBasicMaterial(materialProps);
+    const lit = this.sceneLightingEnabled && (!materialData || !!(flags & 0x0001));
+    if (!lit) return new THREE.MeshBasicMaterial(materialProps);
+    const strength = material2?.normalStrength ?? 1;
+    return new THREE.MeshPhongMaterial({
+      ...materialProps,
+      normalMap,
+      normalScale: normalMap ? new THREE.Vector2(strength, -strength) : undefined,
+      shininess: Math.max(0, materialData?.specPower ?? 0),
+      emissive: materialData && (flags & 0x0200) ? 0xffffff : 0x000000,
+      emissiveIntensity: materialData && (flags & 0x0200) ? clamp01(materialData.emissive) : 0
+    });
   }
 
   updateSceneLights() {
@@ -428,20 +476,20 @@ export class ViewerScene {
 
 function createDataTexture(texture, mode = "opaque", smooth = false) {
   const data = new Uint8Array(texture.rgba);
-  if (mode === "opaque") {
+  if (mode === "opaque" && texture.sourceFormat === "RAW") {
     for (let i = 3; i < data.length; i += 4) {
       data[i] = 255;
     }
-  } else if (mode === "cutout") {
+  } else if (mode === "cutout" && texture.sourceFormat === "RAW") {
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      data[i + 3] = r < 9 && g < 9 && b < 9 ? 0 : 255;
+      data[i + 3] = r === 0 && g === 0 && b === 0 ? 0 : 255;
     }
   }
   const dataTexture = new THREE.DataTexture(data, texture.width, texture.height, THREE.RGBAFormat);
-  dataTexture.colorSpace = THREE.SRGBColorSpace;
+  dataTexture.colorSpace = mode === "normal" ? THREE.NoColorSpace : THREE.SRGBColorSpace;
   dataTexture.flipY = true;
   dataTexture.wrapS = THREE.ClampToEdgeWrapping;
   dataTexture.wrapT = THREE.ClampToEdgeWrapping;
@@ -511,6 +559,35 @@ function clamp01(value) {
   return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
 }
 
+function installHorizontalCameraStrafe(camera, controls, isActive) {
+  const right = new THREE.Vector3();
+  const onKeyDown = (event) => {
+    if (!isActive() || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) {
+      return;
+    }
+    const direction = event.key === "ArrowLeft"
+      ? -1
+      : event.key === "ArrowRight" ? 1 : 0;
+    if (!direction) return;
+
+    camera.updateMatrixWorld();
+    right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    const distance = Math.max(camera.position.distanceTo(controls.target), 1);
+    right.multiplyScalar(direction * distance * 0.04);
+    camera.position.add(right);
+    controls.target.add(right);
+    controls.update();
+    event.preventDefault();
+  };
+  window.addEventListener("keydown", onKeyDown);
+  return () => window.removeEventListener("keydown", onKeyDown);
+}
+
+function isTextEntryTarget(target) {
+  const tagName = target?.tagName?.toUpperCase();
+  return target?.isContentEditable || tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
+}
+
 function offsetTruckVector(vector, offset) {
   return {
     x: (vector?.x ?? 0) + (offset?.x ?? 0),
@@ -550,7 +627,15 @@ function resolveAttachmentOffset(attachment, offsets) {
 function normalizeTextureKey(name) {
   const upper = String(name ?? "").replace(/\\/g, "/").trim().toUpperCase();
   const title = upper.includes("/") ? upper.slice(upper.lastIndexOf("/") + 1) : upper;
-  return title.endsWith(".RAW") ? title.slice(0, -4) : title;
+  return title.replace(/\.[^.]+$/, "");
+}
+
+function multiplyColor(color, tint) {
+  const base = new THREE.Color(color);
+  base.r *= clamp01(tint?.[0] ?? 1);
+  base.g *= clamp01(tint?.[1] ?? 1);
+  base.b *= clamp01(tint?.[2] ?? 1);
+  return base;
 }
 
 function transformVertexBuffer(values) {

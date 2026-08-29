@@ -3,6 +3,7 @@ import { extractPodEntry, findArtEntry, findAllTruckManifests, findEntryByNormal
 import { parseTruckManifestText } from "./trk-parser.js";
 import { decodeBinModel } from "./bin-decoder.js";
 import { decodeRawTexture } from "./texture-decoder.js";
+import { decodeTrueColorTexture } from "./image-decoder.js";
 import { readFile, readTextFile } from "../shared/opfs.js";
 
 self.addEventListener("message", async (event) => {
@@ -105,25 +106,48 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
 
   const textures = [];
   for (const name of textureNames) {
+    const pngEntry = findArtEntry(podIndex, name, ".PNG");
+    const tgaEntry = findArtEntry(podIndex, name, ".TGA");
     const rawEntry = findArtEntry(podIndex, name, ".RAW");
-    if (!rawEntry) {
+    const sourceEntry = pngEntry ?? tgaEntry ?? rawEntry;
+    if (!sourceEntry) {
       warnings.push(`Texture ${name} was referenced but not found in ART.`);
       continue;
     }
-    const actEntry = findArtEntry(podIndex, name, ".ACT");
-    const rawPath = extractedPath(sessionId, extractionScope, rawEntry.normalizedName);
-    await extractPodEntry(opfsPodPath, rawEntry, rawPath);
-    extractedFiles.push(rawPath);
-    const rawBytes = new Uint8Array(await (await readFile(rawPath)).arrayBuffer());
-    let actBytes = null;
-    if (actEntry) {
-      const actPath = extractedPath(sessionId, extractionScope, actEntry.normalizedName);
-      await extractPodEntry(opfsPodPath, actEntry, actPath);
-      extractedFiles.push(actPath);
-      actBytes = new Uint8Array(await (await readFile(actPath)).arrayBuffer());
-    }
     try {
-      textures.push(decodeRawTexture(rawBytes, actBytes, replaceExtension(name, ".RAW")));
+      const sourcePath = extractedPath(sessionId, extractionScope, sourceEntry.normalizedName);
+      await extractPodEntry(opfsPodPath, sourceEntry, sourcePath);
+      extractedFiles.push(sourcePath);
+      const sourceBytes = new Uint8Array(await (await readFile(sourcePath)).arrayBuffer());
+      let decoded;
+      if (sourceEntry.title.endsWith(".RAW")) {
+        const actEntry = findArtEntry(podIndex, name, ".ACT");
+        let actBytes = null;
+        if (actEntry) {
+          const actPath = extractedPath(sessionId, extractionScope, actEntry.normalizedName);
+          await extractPodEntry(opfsPodPath, actEntry, actPath);
+          extractedFiles.push(actPath);
+          actBytes = new Uint8Array(await (await readFile(actPath)).arrayBuffer());
+        }
+        decoded = decodeRawTexture(sourceBytes, actBytes, replaceExtension(name, ".RAW"));
+      } else {
+        decoded = await decodeTrueColorTexture(sourceBytes, sourceEntry.title, sourceEntry.title.endsWith(".TGA") ? "TGA" : "PNG");
+        decoded.name = name;
+        const warning = hdDimensionWarning(sourceEntry.title, decoded);
+        if (warning) warnings.push(warning);
+      }
+      const normalStem = `${textureStem(name)}_N`;
+      const normalEntry = findArtEntry(podIndex, normalStem, ".PNG") ?? findArtEntry(podIndex, normalStem, ".TGA");
+      if (normalEntry) {
+        const normalPath = extractedPath(sessionId, extractionScope, normalEntry.normalizedName);
+        await extractPodEntry(opfsPodPath, normalEntry, normalPath);
+        extractedFiles.push(normalPath);
+        const normalBytes = new Uint8Array(await (await readFile(normalPath)).arrayBuffer());
+        decoded.normal = await decodeTrueColorTexture(normalBytes, normalEntry.title, normalEntry.title.endsWith(".TGA") ? "TGA" : "PNG");
+        const warning = hdDimensionWarning(normalEntry.title, decoded.normal);
+        if (warning) warnings.push(warning);
+      }
+      textures.push(decoded);
     } catch (error) {
       warnings.push(error.message);
     }
@@ -161,6 +185,10 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     .filter((l) => l?.pos)
     .map((l) => ({ pos: l.pos, radius: Math.max(l.bitmapRadius ?? 0.15, 0.1), index: l.index }));
 
+  for (const model of [body, axle, ...wheels.map((wheel) => wheel.model)].filter(Boolean)) {
+    warnings.push(...(model.warnings ?? []).map((warning) => `${model.name}: ${warning}`));
+  }
+
   return {
     body,
     axles: axlePlacements,
@@ -176,6 +204,18 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     warnings,
     extractedFiles: [...new Set(extractedFiles)]
   };
+}
+
+function textureStem(name) {
+  const title = normalizeArchiveName(name).split("/").pop() ?? "";
+  return title.replace(/\.[^.]+$/, "");
+}
+
+function hdDimensionWarning(name, texture) {
+  const valid = texture.width === texture.height
+    && texture.width >= 32 && texture.width <= 1024
+    && (texture.width & (texture.width - 1)) === 0;
+  return valid ? null : `${name} is ${texture.width}×${texture.height}; the engine will resample it to a square power-of-two size in 32..1024`;
 }
 
 const PREVIEW_UNIT_SCALE = 1 / 256;
@@ -343,6 +383,19 @@ function resolveSingleModelEntry(podIndex, requestedName, label, warnings) {
   if (exact) {
     return exact;
   }
+  const stem = textureStem(requestedName);
+  const appendedLods = findNumberedLodEntries(podIndex, stem);
+  if (appendedLods.length) {
+    warnings.push(`Resolved ${label} model ${requestedName} to full-stem LOD ${appendedLods[0].name}.`);
+    return appendedLods[0];
+  }
+  if (stem.length > 7) {
+    const legacyLods = findNumberedLodEntries(podIndex, stem.slice(0, 7));
+    if (legacyLods.length) {
+      warnings.push(`Resolved ${label} model ${requestedName} through the legacy offset-7 LOD name ${legacyLods[0].name}.`);
+      return legacyLods[0];
+    }
+  }
   const candidates = findModelCandidatesByPrefix(podIndex, requestedName);
   if (candidates.length === 1) {
     warnings.push(`Resolved ${label} model ${requestedName} by prefix to ${candidates[0].name}.`);
@@ -354,6 +407,16 @@ function resolveSingleModelEntry(podIndex, requestedName, label, warnings) {
   }
   warnings.push(`Could not resolve ${label} model ${requestedName}.`);
   return null;
+}
+
+function findNumberedLodEntries(podIndex, stem) {
+  const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matcher = new RegExp(`^${escaped}(\\d+)\\.BIN$`, "i");
+  return podIndex.entries
+    .map((entry) => ({ entry, match: entry.normalizedName.startsWith("MODELS/") ? entry.title.match(matcher) : null }))
+    .filter(({ match }) => match)
+    .sort((a, b) => Number(b.match[1]) - Number(a.match[1]))
+    .map(({ entry }) => entry);
 }
 
 function resolveWheelEntries(podIndex, prefix, warnings) {
