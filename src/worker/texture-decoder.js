@@ -21,7 +21,7 @@ export function decodeRawTexture(rawBytes, actBytes, textureName) {
     rgba[out + 2] = palette[colorIndex + 2];
     rgba[out + 3] = 255;
   }
-  return { name: textureName, width, height, rgba };
+  return { name: textureName, width, height, rgba, sourceFormat: "RAW" };
 }
 
 function normalizePalette(bytes) {

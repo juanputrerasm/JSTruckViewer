@@ -4,7 +4,9 @@ import { readFile, writeBytesToFile } from "../shared/opfs.js";
 const ENTRY_NAME_SIZE = 32;
 const COMMENT_SIZE = 80;
 const ENTRY_SIZE = 40;
-const MAX_REASONABLE_ITEMS = 8192;
+const LONG_ENTRY_NAME_SIZE = 64;
+const LONG_ENTRY_SIZE = 72;
+const MAX_REASONABLE_ITEMS = 65536;
 
 export async function indexPodFile(opfsPodPath) {
   const file = await readFile(opfsPodPath);
@@ -17,24 +19,30 @@ export async function indexPodFile(opfsPodPath) {
   if (itemCount < 1 || itemCount > MAX_REASONABLE_ITEMS) {
     throw new Error(`Suspicious POD item count: ${itemCount}`);
   }
-  const tableBytes = itemCount * ENTRY_SIZE;
-  if (84 + tableBytes > file.size) {
-    throw new Error("POD item table exceeds file size");
-  }
   const decoder = new TextDecoder("latin1");
   const comment = decodeNullTerminated(decoder, new Uint8Array(headerBuffer, 4, COMMENT_SIZE));
+  const legacy = await tryReadDirectory(file, itemCount, ENTRY_NAME_SIZE, ENTRY_SIZE, decoder);
+  if (legacy) return { format: "POD1", comment, entries: legacy };
+  const extended = await tryReadDirectory(file, itemCount, LONG_ENTRY_NAME_SIZE, LONG_ENTRY_SIZE, decoder);
+  if (extended) return { format: "Extended POD1", comment, entries: extended };
+  throw new Error("POD1 directory is neither a valid 32-byte nor 64-byte layout.");
+}
+
+async function tryReadDirectory(file, itemCount, nameSize, entrySize, decoder) {
+  const tableBytes = itemCount * entrySize;
+  if (84 + tableBytes > file.size) return null;
   const tableBuffer = await file.slice(84, 84 + tableBytes).arrayBuffer();
   const tableView = new DataView(tableBuffer);
   const tableBytesView = new Uint8Array(tableBuffer);
   const entries = [];
   for (let i = 0; i < itemCount; i += 1) {
-    const offset = i * ENTRY_SIZE;
-    const rawName = tableBytesView.subarray(offset, offset + ENTRY_NAME_SIZE);
+    const offset = i * entrySize;
+    const rawName = tableBytesView.subarray(offset, offset + nameSize);
     const name = decodeNullTerminated(decoder, rawName);
-    const length = tableView.getUint32(offset + ENTRY_NAME_SIZE, true);
-    const dataOffset = tableView.getUint32(offset + ENTRY_NAME_SIZE + 4, true);
-    if (dataOffset + length > file.size) {
-      throw new Error(`POD entry exceeds file size: ${name}`);
+    const length = tableView.getUint32(offset + nameSize, true);
+    const dataOffset = tableView.getUint32(offset + nameSize + 4, true);
+    if (!name || !isPlausibleArchivePath(name) || dataOffset > file.size || length > file.size - dataOffset) {
+      return null;
     }
     entries.push({
       name,
@@ -44,7 +52,7 @@ export async function indexPodFile(opfsPodPath) {
       offset: dataOffset
     });
   }
-  return { comment, entries };
+  return entries;
 }
 
 export async function extractPodEntry(opfsPodPath, entry, outputPath) {
@@ -92,4 +100,8 @@ function decodeNullTerminated(decoder, bytes) {
     end += 1;
   }
   return decoder.decode(bytes.subarray(0, end)).trim();
+}
+
+function isPlausibleArchivePath(name) {
+  return !/[\0-\x1f]/.test(name) && !name.includes(":") && name.length <= LONG_ENTRY_NAME_SIZE - 1;
 }
