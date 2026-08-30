@@ -142,7 +142,7 @@ src/
 
 ## Credits and license
 
-Developed by **Juan Pablo Utreras** for the Monster Truck Madness community.
+Developed by **Juan Pablo Utreras** for the Monster Truck Madness Guild.
 
 Released under the [Apache License 2.0](LICENSE).
 
