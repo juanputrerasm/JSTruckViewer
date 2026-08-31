@@ -86,6 +86,7 @@ Then open <http://localhost:8080/>. There is no build step and no package instal
 | Right drag / two-finger drag | Pan the camera |
 | Mouse wheel / pinch | Zoom |
 | Left / Right Arrow | Strafe the camera left / right |
+| Up / Down Arrow | Move the camera forward / backward |
 | Reset view | Fit the current truck in the camera |
 | Viewer toggles | Show, hide, or change individual rendering features and truck parts |
 | Save screenshot to JPG | Download the current viewport |
