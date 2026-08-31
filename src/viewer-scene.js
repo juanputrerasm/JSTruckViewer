@@ -1,6 +1,16 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+const MRGLMAT_BLEND = 0x0004;
+const MRGLMAT_ALPHATEST = 0x0008;
+const MRGLMAT_ADDITIVE = 0x0010;
+const MRGLMAT_TWOSIDED = 0x0080;
+const MRGLMAT_NOZWRITE = 0x0100;
+const MRGLMAT_EMISSIVE = 0x0200;
+const MRGLMAT_TINT = 0x0400;
+const MRGLMAT_ALPHAREF = 0x0800;
+const MRGLMAT_TEXSOLID = 0x2000;
+
 export class ViewerScene {
   constructor(container) {
     this.container = container;
@@ -19,8 +29,8 @@ export class ViewerScene {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.target.set(0, 2, 0);
-    this.renderer.domElement.title = "Drag to orbit, scroll to zoom, and press Left/Right Arrow to strafe";
-    this.removeStrafeControls = installHorizontalCameraStrafe(
+    this.renderer.domElement.title = "Drag to orbit, scroll to zoom, use Left/Right Arrow to strafe, and Up/Down Arrow to move forward/back";
+    this.removeCameraNavigation = installCameraNavigation(
       this.camera,
       this.controls,
       () => this.renderer.domElement.isConnected
@@ -57,6 +67,8 @@ export class ViewerScene {
     this.partGroups = new Map();
     this.currentAssembly = null;
     this.gravityEnabled = false;
+    this.texturesEnabled = true;
+    this.wireframeEnabled = false;
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
 
@@ -115,7 +127,7 @@ export class ViewerScene {
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.positions), 3));
         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.normals), 3));
         const textureEntry = textureMap.get(normalizeTextureKey(meshData.textureName)) ?? null;
-        const needsAlpha = !!meshData.transparent || !!(meshData.material?.flags & (0x0004 | 0x0008 | 0x2000));
+        const needsAlpha = !!meshData.transparent || !!(meshData.material?.flags & (MRGLMAT_BLEND | MRGLMAT_ALPHATEST | MRGLMAT_TEXSOLID));
         const diffuseMap = textureEntry ? (needsAlpha ? textureEntry.cutout : textureEntry.opaque) : null;
         const normalMap = textureEntry?.normal ?? null;
         if (meshData.uvs?.length) {
@@ -133,15 +145,16 @@ export class ViewerScene {
           material2: meshData.material2,
           normalMap
         });
-        group.add(new THREE.Mesh(geometry, material));
-        if (meshData.material?.flags & 0x2000) {
+        const surfaceMesh = new THREE.Mesh(geometry, material);
+        group.add(surfaceMesh);
+        if (meshData.material?.flags & MRGLMAT_TEXSOLID) {
           const solidPass = this.createSurfaceMaterial({
             color: diffuseMap ? 0xffffff : (meshData.color ?? 0x9b9b9b),
             map: diffuseMap,
             side: THREE.BackSide,
             materialData: {
               ...meshData.material,
-              flags: (meshData.material.flags | 0x0008) & ~(0x0004 | 0x0100 | 0x2000),
+              flags: (meshData.material.flags | MRGLMAT_ALPHATEST) & ~(MRGLMAT_BLEND | MRGLMAT_NOZWRITE | MRGLMAT_TEXSOLID),
               baseAlpha: 1
             },
             material2: meshData.material2,
@@ -150,7 +163,9 @@ export class ViewerScene {
           solidPass.depthWrite = true;
           solidPass.polygonOffset = true;
           solidPass.polygonOffsetFactor = -1;
-          group.add(new THREE.Mesh(geometry, solidPass));
+          const solidMesh = new THREE.Mesh(geometry, solidPass);
+          solidMesh.userData.isMaterialSolidPass = true;
+          group.add(solidMesh);
         }
       }
       this.rootGroup.add(group);
@@ -211,18 +226,12 @@ export class ViewerScene {
       this.groundGrid.position.y = truckBox.min.y;
       this.scene.add(this.groundGrid);
     }
+    this.updateSurfaceDisplayMode();
   }
 
   setTexturesEnabled(enabled) {
-    this.traverseRenderableParts((node) => {
-      if (node.isMesh && node.material) {
-        if (!node.material.userData.originalMap) {
-          node.material.userData.originalMap = node.material.map;
-        }
-        node.material.map = enabled ? node.material.userData.originalMap : null;
-        node.material.needsUpdate = true;
-      }
-    });
+    this.texturesEnabled = !!enabled;
+    this.updateSurfaceDisplayMode();
   }
 
   setTextureSmoothingEnabled(enabled) {
@@ -238,12 +247,52 @@ export class ViewerScene {
   }
 
   setWireframeEnabled(enabled) {
+    this.wireframeEnabled = !!enabled;
+    this.updateSurfaceDisplayMode();
+  }
+
+  updateSurfaceDisplayMode() {
+    const meshes = [];
     this.traverseRenderableParts((node) => {
-      if (node.isMesh && node.material) {
-        node.material.wireframe = enabled;
-        node.material.needsUpdate = true;
+      if (node.isMesh && node.material && !node.userData.isWireframeOverlay) {
+        meshes.push(node);
       }
     });
+
+    for (const mesh of meshes) {
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      let hasActiveTexture = false;
+      for (const material of materials) {
+        if (!Object.hasOwn(material.userData, "originalMap")) {
+          material.userData.originalMap = material.map ?? null;
+        }
+        if (!Object.hasOwn(material.userData, "originalNormalMap")) {
+          material.userData.originalNormalMap = material.normalMap ?? null;
+        }
+        const originalMap = material.userData.originalMap;
+        const textureActive = this.texturesEnabled && !!originalMap;
+        hasActiveTexture ||= textureActive;
+        material.map = textureActive ? originalMap : null;
+        if ("normalMap" in material) {
+          material.normalMap = this.texturesEnabled ? material.userData.originalNormalMap : null;
+        }
+        material.wireframe = this.wireframeEnabled && !textureActive && !mesh.userData.isMaterialSolidPass;
+        material.needsUpdate = true;
+      }
+
+      if (mesh.userData.isMaterialSolidPass) {
+        mesh.visible = !this.wireframeEnabled || hasActiveTexture;
+        continue;
+      }
+
+      let overlay = mesh.children.find((child) => child.userData.isWireframeOverlay);
+      if (this.wireframeEnabled && hasActiveTexture) {
+        overlay ??= createWireframeOverlay(mesh);
+      }
+      if (overlay) {
+        overlay.visible = this.wireframeEnabled && hasActiveTexture;
+      }
+    }
   }
 
   setBackgroundColor(color) {
@@ -427,22 +476,25 @@ export class ViewerScene {
 
   createSurfaceMaterial({ color, map = null, side = THREE.FrontSide, transparent = false, alphaTest = 0, materialData = null, material2 = null, normalMap = null }) {
     const flags = materialData?.flags ?? 0;
-    const tint = materialData && (flags & 0x0400) ? materialData.tint : [1, 1, 1];
+    const tint = materialData && (flags & MRGLMAT_TINT) ? materialData.tint : [1, 1, 1];
     const resolvedColor = map ? multiplyColor(color, tint) : color;
-    const resolvedTransparent = materialData ? !!(flags & 0x0004) : transparent;
-    const resolvedAlphaTest = materialData && (flags & 0x0008)
-      ? ((flags & 0x0800) ? clamp01((materialData.alphaRef ?? 128) / 255) : 0.5)
+    const alphaTested = materialData ? !!(flags & MRGLMAT_ALPHATEST) : alphaTest > 0;
+    // Cutout is an opaque, depth-writing render path. It must win over glass-style flags
+    // inherited by modified presets or inner geometry and the ground grid bleed through it.
+    const resolvedTransparent = materialData ? !!(flags & MRGLMAT_BLEND) && !alphaTested : transparent && !alphaTested;
+    const resolvedAlphaTest = alphaTested
+      ? ((flags & MRGLMAT_ALPHAREF) ? clamp01((materialData?.alphaRef ?? 128) / 255) : (alphaTest || 0.5))
       : alphaTest;
     const materialProps = {
       color: resolvedColor,
       map,
       wireframe: false,
-      side: materialData && (flags & 0x0080) ? THREE.DoubleSide : side,
+      side: materialData && (flags & MRGLMAT_TWOSIDED) ? THREE.DoubleSide : side,
       transparent: resolvedTransparent,
       opacity: resolvedTransparent ? clamp01(materialData?.baseAlpha ?? 1) : 1,
       alphaTest: resolvedAlphaTest,
-      depthWrite: !(flags & 0x0100),
-      blending: flags & 0x0010 ? THREE.AdditiveBlending : THREE.NormalBlending
+      depthWrite: alphaTested || !(flags & MRGLMAT_NOZWRITE),
+      blending: flags & MRGLMAT_ADDITIVE ? THREE.AdditiveBlending : THREE.NormalBlending
     };
     const lit = this.sceneLightingEnabled && (!materialData || !!(flags & 0x0001));
     if (!lit) return new THREE.MeshBasicMaterial(materialProps);
@@ -452,8 +504,8 @@ export class ViewerScene {
       normalMap,
       normalScale: normalMap ? new THREE.Vector2(strength, -strength) : undefined,
       shininess: Math.max(0, materialData?.specPower ?? 0),
-      emissive: materialData && (flags & 0x0200) ? 0xffffff : 0x000000,
-      emissiveIntensity: materialData && (flags & 0x0200) ? clamp01(materialData.emissive) : 0
+      emissive: materialData && (flags & MRGLMAT_EMISSIVE) ? 0xffffff : 0x000000,
+      emissiveIntensity: materialData && (flags & MRGLMAT_EMISSIVE) ? clamp01(materialData.emissive) : 0
     });
   }
 
@@ -559,23 +611,47 @@ function clamp01(value) {
   return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
 }
 
-function installHorizontalCameraStrafe(camera, controls, isActive) {
+function createWireframeOverlay(mesh) {
+  const overlay = new THREE.LineSegments(
+    new THREE.WireframeGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({ color: 0xffff00 })
+  );
+  overlay.userData.isWireframeOverlay = true;
+  overlay.visible = false;
+  mesh.add(overlay);
+  return overlay;
+}
+
+function installCameraNavigation(camera, controls, isActive) {
   const right = new THREE.Vector3();
+  const forward = new THREE.Vector3();
+  const movement = new THREE.Vector3();
   const onKeyDown = (event) => {
     if (!isActive() || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) {
       return;
     }
-    const direction = event.key === "ArrowLeft"
-      ? -1
-      : event.key === "ArrowRight" ? 1 : 0;
-    if (!direction) return;
+    const horizontalDirection = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+    const forwardDirection = event.key === "ArrowUp" ? 1 : event.key === "ArrowDown" ? -1 : 0;
+    if (!horizontalDirection && !forwardDirection) return;
 
     camera.updateMatrixWorld();
-    right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
     const distance = Math.max(camera.position.distanceTo(controls.target), 1);
-    right.multiplyScalar(direction * distance * 0.04);
-    camera.position.add(right);
-    controls.target.add(right);
+    movement.set(0, 0, 0);
+    if (horizontalDirection) {
+      right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+      movement.addScaledVector(right, horizontalDirection);
+    }
+    if (forwardDirection) {
+      forward.subVectors(controls.target, camera.position);
+      forward.y = 0;
+      if (forward.lengthSq() > 1e-8) {
+        movement.addScaledVector(forward.normalize(), forwardDirection);
+      }
+    }
+    if (movement.lengthSq() <= 1e-8) return;
+    movement.normalize().multiplyScalar(distance * 0.04);
+    camera.position.add(movement);
+    controls.target.add(movement);
     controls.update();
     event.preventDefault();
   };
