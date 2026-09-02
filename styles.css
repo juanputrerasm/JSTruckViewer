@@ -166,6 +166,12 @@ body {
   justify-content: space-between;
 }
 
+/* Parts an MTM1 truck simply does not have: axles, axle bars, shocks, driveshaft, lights. */
+.toolbar-grid label.control-unavailable {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .toolbar-grid button {
   grid-column: 1 / -1;
 }

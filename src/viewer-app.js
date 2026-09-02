@@ -159,6 +159,7 @@ export class TruckViewerApp {
   }
 
   renderIdleState() {
+    this.setMtm2PartTogglesEnabled(true);
     this.manifestSummary.innerHTML = "";
     this.warnings.innerHTML = "";
     this.warningsPanel.hidden = true;
@@ -197,19 +198,27 @@ export class TruckViewerApp {
 
     this.truckTitle.textContent = session.manifest.truckName || "";
 
+    // MTM1 manifests stop at the body, tires, anchors and metadata, so the axle, suspension
+    // and light rows are omitted rather than shown as "<missing>" on every classic truck.
+    const manifest = session.manifest;
+    const isMtm1 = manifest.formatVersion === "MTM1";
+    this.setMtm2PartTogglesEnabled(!isMtm1);
     this.manifestSummary.innerHTML = renderKeyValues([
-      ["Truck name", session.manifest.truckName || "<missing>"],
-      ["Model Base Name", session.manifest.truckModelBaseName || "<missing>"],
-      ["Tire Model Name", session.manifest.tireModelBaseName || "<missing>"],
-      ["Axle Model Name", session.manifest.axleModelName || "<missing>"],
-      ["Shock Texture Name", session.manifest.shockTextureName || "<none>"],
-      ["Bar Texture Name", session.manifest.barTextureName || "<none>"],
-      ["Driveshaft Pos", formatVec3(session.manifest.driveshaftPos)],
-      ["Axle Bar Offset", formatVec3(session.manifest.axlebarOffset)],
-      ["Instrument Cluster", session.manifest.instrumentCluster || "<none>"],
-      ["Wave files", session.manifest.waveFiles.join(", ") || "<none>"],
-      ["Lights", String(session.manifest.numberOfLights ?? 0)],
-      ["Scrape points", String(session.manifest.scrapePoints.length)],
+      ["Format", manifest.formatVersion || "MTM2"],
+      ["Truck name", manifest.truckName || "<missing>"],
+      [isMtm1 ? "Truck Model Name" : "Model Base Name", manifest.truckModelBaseName || "<missing>"],
+      ["Tire Model Name", manifest.tireModelBaseName || "<missing>"],
+      ...(isMtm1 ? [] : [
+        ["Axle Model Name", manifest.axleModelName || "<missing>"],
+        ["Shock Texture Name", manifest.shockTextureName || "<none>"],
+        ["Bar Texture Name", manifest.barTextureName || "<none>"],
+        ["Driveshaft Pos", formatVec3(manifest.driveshaftPos)],
+        ["Axle Bar Offset", formatVec3(manifest.axlebarOffset)]
+      ]),
+      ["Instrument Cluster", manifest.instrumentCluster || "<none>"],
+      ["Wave files", manifest.waveFiles.join(", ") || "<none>"],
+      ...(isMtm1 ? [] : [["Lights", String(manifest.numberOfLights ?? 0)]]),
+      ["Scrape points", String(manifest.scrapePoints.length)],
       ["Source", session.sourceMode === "disk" ? "disk" : "URL"]
     ]);
 
@@ -273,6 +282,22 @@ export class TruckViewerApp {
       this.truckSelect
     ]) {
       control.disabled = !enabled;
+    }
+  }
+
+  // Axles, axle bars, shocks, the driveshaft and lights only exist on MTM2 trucks. Their
+  // scene groups stay empty for MTM1, so the matching toggles are greyed out instead of
+  // looking broken.
+  setMtm2PartTogglesEnabled(enabled) {
+    for (const toggle of [
+      this.toggleAxle,
+      this.toggleAxleBars,
+      this.toggleShocks,
+      this.toggleDriveshaft,
+      this.toggleLights
+    ]) {
+      toggle.disabled = !enabled;
+      toggle.closest("label")?.classList.toggle("control-unavailable", !enabled);
     }
   }
 

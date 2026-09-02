@@ -4,7 +4,15 @@ import { parseTruckManifestText } from "./trk-parser.js";
 import { decodeBinModel } from "./bin-decoder.js";
 import { decodeRawTexture } from "./texture-decoder.js";
 import { decodeTrueColorTexture } from "./image-decoder.js";
+import { METALCR2_ACT_NAME } from "../shared/metalcr2-palette.js";
 import { readFile, readTextFile } from "../shared/opfs.js";
+
+const WHEEL_KEYS = [
+  "faxle.rtire.static_bpos",
+  "faxle.ltire.static_bpos",
+  "raxle.rtire.static_bpos",
+  "raxle.ltire.static_bpos"
+];
 
 self.addEventListener("message", async (event) => {
   const { id, type, payload } = event.data;
@@ -66,21 +74,21 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     extractedFiles.push(manifestPath);
   }
 
+  // MTM1 trucks are body plus four tires. They carry no axle model, axle bars, shocks,
+  // driveshaft or lights, so those parts are skipped instead of being reported as missing.
+  const isMtm1 = manifest.formatVersion === "MTM1";
+
   const bodyEntry = resolveSingleModelEntry(podIndex, manifest.truckModelBaseName, "body", warnings);
-  const axleEntry = resolveSingleModelEntry(podIndex, manifest.axleModelName, "axle", warnings);
-  const wheelPlan = resolveWheelEntries(podIndex, manifest.tireModelBaseName, warnings);
+  const axleEntry = isMtm1 ? null : resolveSingleModelEntry(podIndex, manifest.axleModelName, "axle", warnings);
+  const wheelPlan = isMtm1
+    ? resolveMtm1WheelEntries(podIndex, manifest.tireModelBaseName, warnings)
+    : resolveWheelEntries(podIndex, manifest.tireModelBaseName, warnings);
 
   const body = await decodeExtractedModel(bodyEntry, "body", sessionId, opfsPodPath, extractionScope, extractedFiles);
   const axle = await decodeExtractedModel(axleEntry, "axle", sessionId, opfsPodPath, extractionScope, extractedFiles);
 
   const wheels = [];
-  const wheelKeys = [
-    "faxle.rtire.static_bpos",
-    "faxle.ltire.static_bpos",
-    "raxle.rtire.static_bpos",
-    "raxle.ltire.static_bpos"
-  ];
-  for (const wheelKey of wheelKeys) {
+  for (const wheelKey of WHEEL_KEYS) {
     const entry = wheelPlan.mapping[wheelKey] ?? null;
     const wheelModel = await decodeExtractedModel(entry, wheelKey, sessionId, opfsPodPath, extractionScope, extractedFiles);
     wheels.push({
@@ -98,11 +106,13 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       }
     }
   }
-  for (const extra of [manifest.shockTextureName, manifest.barTextureName]) {
+  for (const extra of isMtm1 ? [] : [manifest.shockTextureName, manifest.barTextureName]) {
     if (extra) {
       textureNames.add(normalizeArchiveName(extra));
     }
   }
+
+  const paletteContext = { podIndex, sessionId, opfsPodPath, extractionScope, extractedFiles, cache: new Map() };
 
   const textures = [];
   for (const name of textureNames) {
@@ -121,14 +131,7 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       const sourceBytes = new Uint8Array(await (await readFile(sourcePath)).arrayBuffer());
       let decoded;
       if (sourceEntry.title.endsWith(".RAW")) {
-        const actEntry = findArtEntry(podIndex, name, ".ACT");
-        let actBytes = null;
-        if (actEntry) {
-          const actPath = extractedPath(sessionId, extractionScope, actEntry.normalizedName);
-          await extractPodEntry(opfsPodPath, actEntry, actPath);
-          extractedFiles.push(actPath);
-          actBytes = new Uint8Array(await (await readFile(actPath)).arrayBuffer());
-        }
+        const actBytes = await resolvePaletteBytes(name, paletteContext);
         decoded = decodeRawTexture(sourceBytes, actBytes, replaceExtension(name, ".RAW"));
       } else {
         decoded = await decodeTrueColorTexture(sourceBytes, sourceEntry.title, sourceEntry.title.endsWith(".TGA") ? "TGA" : "PNG");
@@ -169,21 +172,23 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       rightWheel: wheels.find((wheel) => wheel.key === "raxle.rtire.static_bpos")?.model ?? null
     }
   ];
-  const axlePlacements = axlePairs.map((pair) => buildAxlePlacement(axle, pair));
+  const axlePlacements = isMtm1 ? [] : axlePairs.map((pair) => buildAxlePlacement(axle, pair));
   const frontAxleCenter = midpoint(axlePairs[0].leftAnchor, axlePairs[0].rightAnchor);
   const rearAxleCenter = midpoint(axlePairs[1].leftAnchor, axlePairs[1].rightAnchor);
-  const shocks = buildShockDescriptors(frontAxleCenter, rearAxleCenter);
-  const axleBars = buildAxleBarDescriptors(
+  const shocks = isMtm1 ? [] : buildShockDescriptors(frontAxleCenter, rearAxleCenter);
+  const axleBars = isMtm1 ? [] : buildAxleBarDescriptors(
     frontAxleCenter,
     rearAxleCenter,
     manifest.axlebarOffset,
     manifest.superiorAxlebarOffset
   );
-  const driveshaft = buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos);
+  const driveshaft = isMtm1 ? null : buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos);
 
-  const lights = (manifest.lights ?? [])
-    .filter((l) => l?.pos)
-    .map((l) => ({ pos: l.pos, radius: Math.max(l.bitmapRadius ?? 0.15, 0.1), index: l.index }));
+  const lights = isMtm1
+    ? []
+    : (manifest.lights ?? [])
+      .filter((l) => l?.pos)
+      .map((l) => ({ pos: l.pos, radius: Math.max(l.bitmapRadius ?? 0.15, 0.1), index: l.index }));
 
   for (const model of [body, axle, ...wheels.map((wheel) => wheel.model)].filter(Boolean)) {
     warnings.push(...(model.warnings ?? []).map((warning) => `${model.name}: ${warning}`));
@@ -195,8 +200,8 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     axleBars,
     shocks,
     driveshaft,
-    barTextureName: manifest.barTextureName ?? "",
-    shockTextureName: manifest.shockTextureName ?? "",
+    barTextureName: isMtm1 ? "" : (manifest.barTextureName ?? ""),
+    shockTextureName: isMtm1 ? "" : (manifest.shockTextureName ?? ""),
     wheels,
     scrapePoints: manifest.scrapePoints ?? [],
     lights,
@@ -419,6 +424,24 @@ function findNumberedLodEntries(podIndex, stem) {
     .map(({ entry }) => entry);
 }
 
+// MTM1 names one tire model outright ("wheel13.bin") and reuses it on all four corners.
+// Its sidewalls carry the same hub texture on both faces, so no left/right mirroring is needed.
+function resolveMtm1WheelEntries(podIndex, tireModelName, warnings) {
+  const mapping = {};
+  if (!tireModelName) {
+    warnings.push("Manifest did not define tireModelName.");
+    return { mapping };
+  }
+  const entry = resolveSingleModelEntry(podIndex, tireModelName, "tire", warnings);
+  if (!entry) {
+    return { mapping };
+  }
+  for (const wheelKey of WHEEL_KEYS) {
+    mapping[wheelKey] = entry;
+  }
+  return { mapping, candidates: [entry] };
+}
+
 function resolveWheelEntries(podIndex, prefix, warnings) {
   const mapping = {};
   if (!prefix) {
@@ -550,6 +573,28 @@ function buildSuperiorAxleBarSet(frontAxleCenter, rearAxleCenter, baseBarOffset 
 function pickWheelCandidate(candidates, suffix) {
   const upperSuffix = suffix.toUpperCase();
   return candidates.find((entry) => entry.title.toUpperCase().endsWith(upperSuffix)) ?? null;
+}
+
+// Palette resolution for paletted RAW textures, in the order the games themselves use:
+//   1. a same-name .ACT beside the texture (ART/BIGTOP.ACT for ART/BIGTOP.RAW);
+//   2. ART/METALCR2.ACT from the archive, the shared palette MTM1 applied to everything else;
+//   3. the bundled copy of METALCR2.ACT, so an MTM1 TRUCK.POD renders without STARTUP.POD.
+// MTM2 archives normally ship a same-name palette per texture and stop at step 1.
+async function resolvePaletteBytes(textureName, context) {
+  const { podIndex, sessionId, opfsPodPath, extractionScope, extractedFiles, cache } = context;
+  const entry = findArtEntry(podIndex, textureName, ".ACT") ?? findArtEntry(podIndex, METALCR2_ACT_NAME, ".ACT");
+  if (!entry) {
+    return null;
+  }
+  if (cache.has(entry.normalizedName)) {
+    return cache.get(entry.normalizedName);
+  }
+  const actPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
+  await extractPodEntry(opfsPodPath, entry, actPath);
+  extractedFiles.push(actPath);
+  const bytes = new Uint8Array(await (await readFile(actPath)).arrayBuffer());
+  cache.set(entry.normalizedName, bytes);
+  return bytes;
 }
 
 async function decodeExtractedModel(entry, label, sessionId, opfsPodPath, extractionScope, extractedFiles) {

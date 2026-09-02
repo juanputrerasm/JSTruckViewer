@@ -6,9 +6,9 @@
 [![GitHub Pages](https://img.shields.io/badge/demo-GitHub%20Pages-222?logo=github)](https://juanputrerasm.github.io/JSTruckViewer/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-**A browser-based 3D truck viewer for Monster Truck Madness 2.**
+**A browser-based 3D truck viewer for Monster Truck Madness 1 and 2.**
 
-JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manifests, decodes the referenced BIN models and textures, and assembles a complete truck in Three.js. All archive processing happens locally in the browser.
+JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manifests, decodes the referenced BIN models and textures, and assembles a complete truck in Three.js. Classic MTM1 trucks and modern MTM2 trucks both load from the same archive. All archive processing happens locally in the browser.
 
 **Live application:** [Open JSTruckViewer on GitHub Pages](https://juanputrerasm.github.io/JSTruckViewer/)
 
@@ -22,6 +22,7 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 - **Multi-truck archives** — discover every `TRUCK/*.TRK` manifest and switch trucks without reopening the archive.
 - **Multi-POD ZIP packs** — stage and search all POD members contained in a ZIP.
 - **Complete truck assembly** — render the body, four wheels, axles, axle bars, shocks, driveshaft, lights, and scrape points.
+- **MTM1 and MTM2 trucks** — classic MTM1 manifests are detected automatically and assembled as body plus four tires.
 - **Interactive inspection** — orbit, pan, zoom, reset the camera, change lighting and background, toggle parts, textures, smoothing, wireframe, and gravity.
 - **Screenshot export** — save the current viewport as a JPEG.
 - **Client-side operation** — archives and extracted assets remain in temporary browser storage.
@@ -33,14 +34,21 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 | POD1 | Original Terminal Reality POD directory layout |
 | POD1-64 (Extended POD1) | POD1-compatible layout with 64-byte entry names |
 | ZIP | One or more POD archives in a single pack |
-| TRK | Truck manifest, component references, anchors, lights, and scrape points |
-| BIN | Classic and updated MTM2 model records |
-| RAW + ACT | Legacy paletted textures |
+| TRK (MTM2, MTM2.1) | Truck manifest, component references, anchors, lights, and scrape points |
+| TRK (MTM1) | Classic manifest: body, one tire model, anchors, and scrape points |
+| BIN | Classic and updated MTM2 model records, and the MTM1 records that share them |
+| RAW + ACT | Legacy paletted textures, including the shared MTM1 METALCR2 palette |
 | PNG and TGA | High-definition diffuse and normal textures |
 
 “Extended POD1” is not an official new POD version. It identifies the POD1-compatible directory layout whose name field is widened from 32 to 64 bytes.
 
-Both POD1 layouts use the same bounds and path validation. Optional `.ACT` palette metadata stored after `.RAW` paths is parsed without allowing trailing field bytes to affect entry lookup.
+## MTM1 trucks support
+
+A manifest whose first line is the bare `truckName` label, rather than an `MTM2` or `MTM2.1` header, is read as MTM1. MTM1 trucks name their body and tire models by full file name, reuse one tire model on all four corners, and have no axle model, axle bars, shocks, driveshaft, or lights. The viewer skips those parts instead of reporting them as missing, and greys out the toggles that cannot apply.
+
+Palette resolution follows what the games actually do. A `RAW` texture uses its same-name `.ACT` when the archive provides one, otherwise `METALCR2.ACT`. MTM2 archives supply a same-name palette for practically every texture, so they resolve at the first step and are unaffected.
+
+See [MTM1 truck format](docs/MTM1_TRK_FORMAT.md) for the field-by-field comparison.
 
 ## Modern MTM2 (Community Patch 3) rendering
 
@@ -142,6 +150,7 @@ src/
 - [POD1-64 / Extended POD1](docs/POD1_64_FORMAT.md)
 - [BIN HD / Extended BIN](docs/BIN_HD_FORMAT.md)
 - [MTM2.1 / TRK 2.1](docs/TRK_2_1_FORMAT.md)
+- [MTM1 truck format](docs/MTM1_TRK_FORMAT.md)
 
 ## Credits and license
 

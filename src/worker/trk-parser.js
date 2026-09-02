@@ -1,22 +1,28 @@
 export function parseTruckManifestText(text) {
   const lines = text
-    .replace(/\u0000/g, "")
+    // NUL padding and the DOS end-of-file marker (0x1A) both show up in shipped MTM1 manifests.
+    .replace(/[\u0000\u001a]/g, "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
   const headerLine = lines[0] ?? "";
+  const upperHeader = headerLine.toUpperCase();
 
-  // First line identifies the truck format version, for example "MTM2 ..." or "MTM2.1 ...".
-  if (lines.length > 0 && headerLine.toUpperCase().startsWith("MTM2")) {
+  // MTM2 manifests open with a format header such as "MTM2 truckName" or "MTM2.1 truckName",
+  // followed by the unlabeled truck name. MTM1 manifests have no header at all: they open with
+  // the bare "truckName" label, which is the reliable way to tell the two generations apart.
+  const isMtm2 = upperHeader.startsWith("MTM2");
+  const isMtm1 = !isMtm2 && upperHeader.startsWith("TRUCKNAME");
+  if (isMtm2 || isMtm1) {
     lines.shift();
   }
 
-  // Second line is the truck name value (unlabeled).
+  // Next line is the truck name value (unlabeled).
   const truckName = lines.shift() ?? "";
 
   const manifest = {
-    formatVersion: headerLine.toUpperCase().startsWith("MTM2.1") ? "MTM2.1" : "MTM2",
+    formatVersion: isMtm1 ? "MTM1" : upperHeader.startsWith("MTM2.1") ? "MTM2.1" : "MTM2",
     truckName,
     truckModelBaseName: "",
     tireModelBaseName: "",
@@ -41,12 +47,14 @@ export function parseTruckManifestText(text) {
     const label = lines[i];
     const value = lines[i + 1] ?? "";
 
-    if (label === "truckModelBaseName") {
+    // MTM2 stores model stems ("bigfoot"); MTM1 stores full file names ("bigfoot.bin").
+    // Both resolve through the same model lookup, so they share the manifest fields.
+    if (label === "truckModelBaseName" || label === "truckModelName") {
       manifest.truckModelBaseName = value;
       i += 1;
       continue;
     }
-    if (label === "tireModelBaseName") {
+    if (label === "tireModelBaseName" || label === "tireModelName") {
       manifest.tireModelBaseName = value;
       i += 1;
       continue;
@@ -182,7 +190,9 @@ function parseSuperiorAxlebarOffset(value) {
 
 function isManifestLabel(line) {
   return line === "truckModelBaseName"
+    || line === "truckModelName"
     || line === "tireModelBaseName"
+    || line === "tireModelName"
     || line === "axleModelName"
     || line === "shockTextureName"
     || line === "barTextureName"
