@@ -159,13 +159,11 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
         if (reader.remaining() < 20) break blocks;
         reader.skip(4);
         currentTexture = upper(reader.readFixedAscii(16));
-        currentSolidColor = 0;
         break;
       case MRGL_TEXTURE64:
         if (reader.remaining() < 68) { model.warnings.push("Truncated MRGL_TEXTURE64 record"); break blocks; }
         reader.skip(4);
         currentTexture = upper(reader.readFixedAscii(64));
-        currentSolidColor = 0;
         break;
       case MRGL_MATERIAL:
         if (reader.remaining() < 44) { model.warnings.push("Truncated MRGL_MATERIAL record"); break blocks; }
@@ -200,13 +198,11 @@ function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagn
         } else {
           break blocks;
         }
-        currentSolidColor = 0;
         break;
       }
       case 0x0000000a:
         if (reader.remaining() < 4) break blocks;
         currentSolidColor = reader.readInt32() & 0x00ffffff;
-        currentTexture = "";
         break;
       case 0x0000000c:
         if (reader.remaining() < 24) break blocks;
@@ -568,6 +564,9 @@ function polygonSignature(polygon) {
     solid: !!polygon.solid,
     solidColor: polygon.solidColor ?? 0,
     transparent: !!polygon.transparent,
+    materialId: polygon.material?.id ?? null,
+    material2Flags: polygon.material2?.flags2 ?? null,
+    normalStrength: polygon.material2?.normalStrength ?? null,
     corners
   });
 }

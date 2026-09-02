@@ -40,6 +40,8 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 
 “Extended POD1” is not an official new POD version. It identifies the POD1-compatible directory layout whose name field is widened from 32 to 64 bytes.
 
+Both POD1 layouts use the same bounds and path validation. Optional `.ACT` palette metadata stored after `.RAW` paths is parsed without allowing trailing field bytes to affect entry lookup.
+
 ## Modern MTM2 (Community Patch 3) rendering
 
 The viewer supports the updated BIN texture and material records, including 64-byte texture names, polygon material assignments, reflection and color blocks, and material parameters. Diffuse texture lookup uses `.PNG`, then `.TGA`, then `.RAW`.

@@ -7,13 +7,14 @@ This document describes the original Terminal Reality POD1 archive layout and th
 POD1-64 is not EPD and is not a 64-bit archive format. The number 64 describes the widened 64-byte directory-name field. The engine design retains the POD1 family and selects the extended directory only when a path exceeds the classic POD1 name budget.
 
 > [!IMPORTANT]
-> The published engine notes say that production extended archives use a **version-tagged header**, but the referenced companion `CPOD_LONG_NAMES.md` contract is not publicly available. The two JavaScript readers currently implement the confirmed widened-directory layout with the classic 84-byte POD1 header and validate it structurally. Treat the header-tag portion below as unresolved until an updated C-Pod archive or the companion contract is available.
+> The published engine notes say that production extended archives use a **version-tagged header**, but no available archive or document identifies its bytes or location. The two JavaScript readers implement the untagged widened-directory layout with the classic 84-byte POD1 header and validate it structurally. Treat the header-tag portion below as unresolved until a known-good tagged archive is available.
 
 ## Byte conventions
 
 - Integer fields are little-endian.
-- Names and comments are fixed-width byte arrays containing an 8-bit string.
-- A string must be NUL-terminated inside its field; unused bytes should be zero.
+- Names and comments use ISO-8859-1 and are NUL-terminated inside fixed-width fields.
+- Leading and trailing code points from `U+0000` through `U+0020` are removed after decoding.
+- Bytes after a terminator are not guaranteed to be zero and must not participate in entry lookup.
 - Entry offsets are absolute file offsets.
 - There is no POD2 or EPD signature in the classic POD1 header.
 
@@ -49,11 +50,21 @@ Each classic entry is 40 bytes:
 
 | Relative offset | Size | Type | Field |
 |---:|---:|---|---|
-| `0x00` | 32 | `char[32]` | Archive path/name |
+| `0x00` | 32 | `char[32]` | Name field: path, NUL, optional palette record, remainder |
 | `0x20` | 4 | `uint32_le` | File length in bytes |
 | `0x24` | 4 | `uint32_le` | Absolute data offset |
 
 Directory entry `i` begins at `84 + i * 40`.
+
+### Hidden palette record
+
+Some early Terminal Reality packers stored a second NUL-terminated string after the path on `.RAW` entries. It is the bare `.ACT` filename used to author that texture:
+
+```text
+ART\BASHP.RAW NUL BIONSHIP.ACT NUL remainder
+```
+
+Readers use only the first string for lookup. The second string is accepted as palette metadata only when the entry path ends in `.RAW` and the candidate ends in `.ACT`; all other trailing bytes are opaque producer data. Palette names resolve by entry filename rather than full path. The same parsing is harmless for a 64-byte name field, although no POD1-64 producer is known to emit this metadata.
 
 ## POD1-64 directory layout
 
@@ -75,10 +86,11 @@ POD1 has no classic magic value, so both projects use validated layout detection
 
 1. Exclude known EPD (`dtxe`) and POD2 (`POD2`) signatures where applicable.
 2. Read the POD1 item count and 80-byte comment.
-3. Attempt the classic 40-byte directory first.
-4. Accept it only if every entry has a plausible non-empty path and its byte range is inside the archive.
-5. If classic validation fails, attempt the 72-byte POD1-64 directory with the same checks.
-6. Reject the archive if neither complete directory validates.
+3. Reject counts outside `1..8192`.
+4. Attempt the classic 40-byte directory first.
+5. Accept it only if every entry has a plausible non-empty path and its byte range is inside the archive.
+6. If classic validation fails, attempt the 72-byte POD1-64 directory with the same checks.
+7. Reject the archive if neither complete directory validates.
 
 Classic is attempted first to preserve existing POD1 behavior and avoid identifying an ordinary archive as extended unnecessarily.
 
@@ -87,7 +99,8 @@ Classic is attempted first to preserve existing POD1 behavior and avoid identify
 - Emit classic POD1 when every complete archive path fits in 31 bytes, unless the authoritative version-tag contract requires otherwise.
 - Emit POD1-64 only when a path requires the wider field. Gratuitous use prevents older engines and utilities from opening an otherwise compatible archive.
 - Count the entire stored path, including prefixes such as `ART\` or `MODELS\`, the extension, and the NUL terminator.
-- NUL-terminate every name and zero-fill the remainder of its field.
+- Preserve an original fixed-width comment or name field byte-for-byte when rebuilding; this retains palette records and producer data after the terminator.
+- For a new field, NUL-terminate the name and zero-fill the remainder. Do not invent palette records.
 - Use overflow-safe validation for `offset + length`; the preferred test is `offset <= fileSize && length <= fileSize - offset`.
 - Do not infer this format from EPD. EPD has its own `dtxe` signature, header, and 80-byte directory records.
 
@@ -112,4 +125,5 @@ The upstream engine notes describe the production extension as “64-byte names,
 ## Upstream references
 
 - [MTM2 Engine Content Limits](https://www.mtm2.com/~mtmg/misc/ENGINE_LIMITS.md) — extended-directory design and name budgets
-- The engine notes refer to `CPOD_LONG_NAMES.md`; it was not available at the published `/~mtmg/misc/` location when this document was written.
+- [Terminal Reality POD archive family specification](https://github.com/juanputrerasm/JPod/blob/main/docs/POD_FORMAT.md) — current verified POD1 rules, evidence, palette metadata, and POD1-64 status
+- [C-Pod long-name contract](https://www.mtm2.com/~mtmg/misc/CPOD_LONG_NAMES.md) — naming policy only; it does not specify a binary version tag

@@ -6,7 +6,7 @@ const COMMENT_SIZE = 80;
 const ENTRY_SIZE = 40;
 const LONG_ENTRY_NAME_SIZE = 64;
 const LONG_ENTRY_SIZE = 72;
-const MAX_REASONABLE_ITEMS = 65536;
+const MAX_REASONABLE_ITEMS = 8192;
 
 export async function indexPodFile(opfsPodPath) {
   const file = await readFile(opfsPodPath);
@@ -37,11 +37,10 @@ async function tryReadDirectory(file, itemCount, nameSize, entrySize, decoder) {
   const entries = [];
   for (let i = 0; i < itemCount; i += 1) {
     const offset = i * entrySize;
-    const rawName = tableBytesView.subarray(offset, offset + nameSize);
-    const name = decodeNullTerminated(decoder, rawName);
+    const { name, paletteName, pathTerminated } = decodePod1NameField(decoder, tableBytesView, offset, nameSize);
     const length = tableView.getUint32(offset + nameSize, true);
     const dataOffset = tableView.getUint32(offset + nameSize + 4, true);
-    if (!name || !isPlausibleArchivePath(name) || dataOffset > file.size || length > file.size - dataOffset) {
+    if (!pathTerminated || !name || !isPlausibleArchivePath(name) || dataOffset > file.size || length > file.size - dataOffset) {
       return null;
     }
     entries.push({
@@ -49,7 +48,8 @@ async function tryReadDirectory(file, itemCount, nameSize, entrySize, decoder) {
       normalizedName: normalizeArchiveName(name),
       title: archiveTitle(name),
       length,
-      offset: dataOffset
+      offset: dataOffset,
+      paletteName
     });
   }
   return entries;
@@ -99,7 +99,30 @@ function decodeNullTerminated(decoder, bytes) {
   while (end < bytes.length && bytes[end] !== 0) {
     end += 1;
   }
-  return decoder.decode(bytes.subarray(0, end)).trim();
+  return trimPodString(decoder.decode(bytes.subarray(0, end)));
+}
+
+function decodePod1NameField(decoder, bytes, offset, width) {
+  const limit = Math.min(offset + width, bytes.length);
+  let pathEnd = offset;
+  while (pathEnd < limit && bytes[pathEnd] !== 0) pathEnd += 1;
+  const pathTerminated = pathEnd < limit;
+  const name = trimPodString(decoder.decode(bytes.subarray(offset, pathEnd)));
+  let paletteName = null;
+  if (name.toUpperCase().endsWith(".RAW") && pathEnd < limit - 1) {
+    const paletteStart = pathEnd + 1;
+    let paletteEnd = paletteStart;
+    while (paletteEnd < limit && bytes[paletteEnd] !== 0) paletteEnd += 1;
+    const candidate = trimPodString(decoder.decode(bytes.subarray(paletteStart, paletteEnd)));
+    if (paletteEnd < limit && candidate.toUpperCase().endsWith(".ACT")) {
+      paletteName = candidate;
+    }
+  }
+  return { name, paletteName, pathTerminated };
+}
+
+function trimPodString(value) {
+  return value.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "");
 }
 
 function isPlausibleArchivePath(name) {
