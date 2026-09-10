@@ -1,0 +1,81 @@
+import { decodeActPalette } from "../texture-decoder.js";
+import { decodeTiffTexture, isTiff } from "./tiff-decoder.js";
+
+/*
+  4x4 Evolution texture decoding: indexed .RAW plus a same-stem .ACT palette and an optional
+  .OPA opacity plane (Evo 1), or a .TIF (Evo 2).
+
+  This does not reuse the viewer's decodeRawTexture, because two of that reader's rules are
+  MTM rules that are wrong here:
+
+    - MTM has no alpha anywhere, so transparency is a colour key: a texel whose palette entry
+      is pure black is cut, everything else is opaque. Evo instead ships a real 8-bit opacity
+      plane beside the texture, and Evo 2 puts a second sample inside the TIFF. Treating
+      either as a binary key would harden every soft glass and light edge into a stencil.
+
+    - MTM resolves one palette per track, with ART/METALCR2.ACT as the shared fallback. Evo
+      resolves one per texture: all 149 .RAW textures in the stock Evo 1 TRUCK.POD have their
+      own same-stem .ACT, and there is no archive-wide palette to fall back on.
+
+  Evo .RAW images are square and unheadered, so the side comes from the byte count. The stock
+  truck art uses four sizes - 64, 128, 256 and 512 - two of which the MTM reader rejects
+  outright. An .OPA is one byte per pixel and is applied only when it has exactly as many
+  bytes as the image has pixels, since a mismatch means the pairing was wrong rather than
+  that the plane needs resampling.
+
+  Decoded textures are tagged sourceFormat "EVO" so the scene keeps the alpha channel as
+  authored instead of re-deriving it with the MTM colour key.
+*/
+
+const MIN_SIDE = 8;
+const MAX_SIDE = 2048;
+
+/** Side length of a square 8-bit image with this many bytes, or 0 if there is none. */
+export function evoRawSide(byteLength) {
+  for (let side = MIN_SIDE; side <= MAX_SIDE; side <<= 1) {
+    if (byteLength === side * side) return side;
+  }
+  return 0;
+}
+
+/**
+ * Decodes one Evo texture to RGBA.
+ *
+ * `sourceBytes` is either an indexed .RAW or a .TIF; `actBytes` is the .RAW's palette and
+ * `opaBytes` its optional opacity plane.
+ */
+export function decodeEvoTexture(sourceBytes, actBytes, opaBytes, textureName) {
+  if (isTiff(sourceBytes)) {
+    return applyOpacityPlane(decodeTiffTexture(sourceBytes, textureName), opaBytes);
+  }
+
+  const side = evoRawSide(sourceBytes?.length ?? 0);
+  if (!side) throw new Error(`${textureName}: unsupported RAW size ${sourceBytes?.length ?? 0} bytes`);
+
+  const palette = decodeActPalette(actBytes);
+  if (!palette) throw new Error(`${textureName}: no usable .ACT palette`);
+
+  const rgba = new Uint8ClampedArray(side * side * 4);
+  for (let i = 0; i < sourceBytes.length; i += 1) {
+    const entry = sourceBytes[i] * 3;
+    const out = i * 4;
+    rgba[out] = palette[entry];
+    rgba[out + 1] = palette[entry + 1];
+    rgba[out + 2] = palette[entry + 2];
+    rgba[out + 3] = 255;
+  }
+  return applyOpacityPlane(
+    { name: textureName, width: side, height: side, rgba, sourceFormat: "EVO", hasAlpha: false },
+    opaBytes
+  );
+}
+
+function applyOpacityPlane(decoded, opaBytes) {
+  const pixels = decoded.width * decoded.height;
+  if (!opaBytes || opaBytes.length !== pixels) return decoded;
+  const { rgba } = decoded;
+  for (let i = 0; i < pixels; i += 1) {
+    rgba[i * 4 + 3] = opaBytes[i];
+  }
+  return { ...decoded, hasAlpha: true };
+}

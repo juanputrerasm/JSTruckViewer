@@ -6,9 +6,9 @@
 [![GitHub Pages](https://img.shields.io/badge/demo-GitHub%20Pages-222?logo=github)](https://juanputrerasm.github.io/JSTruckViewer/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-**A browser-based 3D truck viewer for Monster Truck Madness 1 and 2.**
+**A browser-based 3D truck viewer for Monster Truck Madness 1 and 2 and 4x4 Evolution 1 and 2.**
 
-JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manifests, decodes the referenced BIN models and textures, and assembles a complete truck in Three.js. Classic MTM1 trucks and modern MTM2 trucks both load from the same archive. All archive processing happens locally in the browser.
+JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manifests, decodes the referenced models and textures, and assembles a complete truck in Three.js. Classic MTM1 trucks, modern MTM2 trucks and both generations of 4x4 Evolution all load from the same archive. All archive processing happens locally in the browser.
 
 **Live application:** [Open JSTruckViewer on GitHub Pages](https://juanputrerasm.github.io/JSTruckViewer/)
 
@@ -23,6 +23,7 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 - **Multi-POD ZIP packs** — stage and search all POD members contained in a ZIP.
 - **Complete truck assembly** — render the body, four wheels, axles, axle bars, shocks, driveshaft, lights, and scrape points.
 - **MTM1 and MTM2 trucks** — classic MTM1 manifests are detected automatically and assembled as body plus four tires.
+- **4x4 Evolution 1 and 2 trucks** — POD2 archives, TRK v6 and v7 manifests, SMF models, and Evo's paletted and TIFF textures with their real opacity channels.
 - **Interactive inspection** — orbit, pan, zoom, reset the camera, change lighting and background, toggle parts, textures, smoothing, wireframe, and gravity.
 - **Screenshot export** — save the current viewport as a JPEG.
 - **Client-side operation** — archives and extracted assets remain in temporary browser storage.
@@ -33,11 +34,16 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 |---|---|
 | POD1 | Original Terminal Reality POD directory layout |
 | POD1-64 (Extended POD1) | POD1-compatible layout with 64-byte entry names |
+| POD2 | Signed and indexed archive used by 4x4 Evolution 1 and 2 |
 | ZIP | One or more POD archives in a single pack |
 | TRK (MTM2, MTM2.1) | Truck manifest, component references, anchors, lights, and scrape points |
 | TRK (MTM1) | Classic manifest: body, one tire model, anchors, and scrape points |
+| TRK (v6, v7) | 4x4 Evolution 1 and 2 manifest: showroom data, vec3 anchors, counted lists, and paint schemes |
 | BIN | Classic and updated MTM2 model records, and the MTM1 records that share them |
+| SMF | 4x4 Evolution "C3DModel" geometry, with per-group materials and bump-map references |
 | RAW + ACT | Legacy paletted textures, including the shared MTM1 METALCR2 palette |
+| RAW + ACT + OPA | 4x4 Evolution paletted textures with their 8-bit opacity plane |
+| TIFF | 4x4 Evolution 2 paletted diffuse textures and true-colour normal maps |
 | PNG and TGA | High-definition diffuse and normal textures |
 
 “Extended POD1” is not an official new POD version. It identifies the POD1-compatible directory layout whose name field is widened from 32 to 64 bytes.
@@ -49,6 +55,16 @@ A manifest whose first line is the bare `truckName` label, rather than an `MTM2`
 Palette resolution follows what the games actually do. A `RAW` texture uses its same-name `.ACT` when the archive provides one, otherwise `METALCR2.ACT`. MTM2 archives supply a same-name palette for practically every texture, so they resolve at the first step and are unaffected.
 
 See [MTM1 truck format](docs/MTM1_TRK_FORMAT.md) for the field-by-field comparison.
+
+## 4x4 Evolution trucks support
+
+A manifest whose first line is `version`, followed by `6` or `7`, is read as 4x4 Evolution or 4x4 Evolution 2. These archives differ from the MTM ones at three layers at once: the container is POD2, the models are `.SMF` rather than `.BIN`, and the textures carry a genuine opacity channel instead of MTM's black colour key.
+
+Evo trucks are assembled as body plus four tires plus lights. All 271 stock manifests name `NULL.BIN` for the axle and `NULL.RAW` for the axle bars, and Evo bodies model their own suspension as ordinary geometry, so the axle, axle-bar, shock and driveshaft toggles are greyed out the same way they are for MTM1.
+
+Transparency is handled differently from MTM's. Evo flags only its glass and light-lens groups as transparent and backs them with a real 8-bit plane — a same-stem `.OPA` in Evo 1, the second TIFF sample in Evo 2 — so those groups are blended rather than alpha-tested. Evo 2 additionally names a `_bump` normal map per group, which the viewer uses directly instead of guessing at a `_N` companion.
+
+See [4x4 Evolution truck format](docs/EVO_TRK_FORMAT.md) for the POD2, TRK, SMF and texture details, including the measurements behind the axis, winding and V-orientation choices.
 
 ## Modern MTM2 (Community Patch 3) rendering
 

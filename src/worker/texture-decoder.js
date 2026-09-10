@@ -21,6 +21,30 @@ export function decodeRawTexture(rawBytes, actBytes, textureName) {
   return { name: textureName, width, height, rgba, sourceFormat: "RAW" };
 }
 
+/*
+  Reads a 256-entry .ACT into 8-bit RGB, or null when the bytes are not a usable palette.
+
+  Adobe colour tables are 8-bit, but the .ACT files beside the MTM and Evo textures are
+  routinely VGA-era 6-bit tables saved without rescaling. Nothing in the file distinguishes
+  the two, so a table whose every component fits in 6 bits is treated as 6-bit and expanded;
+  a genuine 8-bit table that happens to be that dark would only be scaled by 255/63, which is
+  the same relationship, so the guess cannot wash out a real palette.
+*/
+export function decodeActPalette(actBytes) {
+  if (!actBytes || actBytes.length < LEGACY_PALETTE_SIZE) return null;
+  const raw = actBytes.subarray
+    ? actBytes.subarray(0, LEGACY_PALETTE_SIZE)
+    : actBytes.slice(0, LEGACY_PALETTE_SIZE);
+  for (let i = 0; i < LEGACY_PALETTE_SIZE; i += 1) {
+    if (raw[i] > 63) return raw.slice();
+  }
+  const expanded = new Uint8Array(LEGACY_PALETTE_SIZE);
+  for (let i = 0; i < LEGACY_PALETTE_SIZE; i += 1) {
+    expanded[i] = Math.round((raw[i] * 255 + 31) / 63);
+  }
+  return expanded;
+}
+
 // Last resort when neither a same-name .ACT nor an archived METALCR2.ACT was found.
 function normalizePalette(bytes) {
   if (bytes && bytes.length >= LEGACY_PALETTE_SIZE) {

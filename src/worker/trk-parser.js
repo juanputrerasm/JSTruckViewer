@@ -1,3 +1,5 @@
+import { isEvoManifest, parseEvoManifest } from "./evo/evo-trk-parser.js";
+
 export function parseTruckManifestText(text) {
   const lines = text
     // NUL padding and the DOS end-of-file marker (0x1A) both show up in shipped MTM1 manifests.
@@ -5,6 +7,13 @@ export function parseTruckManifestText(text) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+
+  // 4x4 Evolution 1 and 2 open with a "version" / "6" or "7" pair instead of an MTM header.
+  // Their dialect diverges enough - vec3 wheel anchors, counted lists, .SMF models - to be
+  // worth its own reader rather than more branches in the MTM one.
+  if (isEvoManifest(lines)) {
+    return parseEvoManifest(lines);
+  }
 
   const headerLine = lines[0] ?? "";
   const upperHeader = headerLine.toUpperCase();
@@ -23,6 +32,7 @@ export function parseTruckManifestText(text) {
 
   const manifest = {
     formatVersion: isMtm1 ? "MTM1" : upperHeader.startsWith("MTM2.1") ? "MTM2.1" : "MTM2",
+    modelExtension: ".BIN",
     truckName,
     truckModelBaseName: "",
     tireModelBaseName: "",
