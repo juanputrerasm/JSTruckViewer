@@ -2,6 +2,8 @@ import { joinPath, normalizeArchiveName, replaceExtension } from "../shared/path
 import { extractPodEntry, findArtEntry, findAllTruckManifests, findEntryByNormalizedName, findFirstTruckManifest, findModelCandidatesByPrefix, indexPodFile } from "./pod-format.js";
 import { parseTruckManifestText } from "./trk-parser.js";
 import { decodeBinModel } from "./bin-decoder.js";
+import { decodeSmfModel, isSmfModel } from "./evo/smf-parser.js";
+import { decodeEvoTexture } from "./evo/evo-texture.js";
 import { decodeRawTexture } from "./texture-decoder.js";
 import { decodeTrueColorTexture } from "./image-decoder.js";
 import { METALCR2_ACT_NAME } from "../shared/metalcr2-palette.js";
@@ -76,13 +78,21 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
 
   // MTM1 trucks are body plus four tires. They carry no axle model, axle bars, shocks,
   // driveshaft or lights, so those parts are skipped instead of being reported as missing.
+  //
+  // 4x4 Evolution goes further: its bodies model their own suspension as ordinary geometry,
+  // and every stock manifest names "NULL.BIN" for the axle and "NULL.RAW" for the bars. So an
+  // Evo truck is body plus four tires plus lights, with the same parts skipped as MTM1 but
+  // the light markers kept.
   const isMtm1 = manifest.formatVersion === "MTM1";
+  const isEvo = manifest.formatVersion === "EVO1" || manifest.formatVersion === "EVO2";
+  const hasChassisHardware = !isMtm1 && !isEvo;
+  const modelExtension = manifest.modelExtension ?? ".BIN";
 
-  const bodyEntry = resolveSingleModelEntry(podIndex, manifest.truckModelBaseName, "body", warnings);
-  const axleEntry = isMtm1 ? null : resolveSingleModelEntry(podIndex, manifest.axleModelName, "axle", warnings);
+  const bodyEntry = resolveSingleModelEntry(podIndex, manifest.truckModelBaseName, "body", warnings, modelExtension);
+  const axleEntry = hasChassisHardware ? resolveSingleModelEntry(podIndex, manifest.axleModelName, "axle", warnings, modelExtension) : null;
   const wheelPlan = isMtm1
     ? resolveMtm1WheelEntries(podIndex, manifest.tireModelBaseName, warnings)
-    : resolveWheelEntries(podIndex, manifest.tireModelBaseName, warnings);
+    : resolveWheelEntries(podIndex, manifest.tireModelBaseName, warnings, modelExtension);
 
   const body = await decodeExtractedModel(bodyEntry, "body", sessionId, opfsPodPath, extractionScope, extractedFiles);
   const axle = await decodeExtractedModel(axleEntry, "axle", sessionId, opfsPodPath, extractionScope, extractedFiles);
@@ -98,21 +108,42 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     });
   }
 
+  const models = [body, axle, ...wheels.map((wheel) => wheel.model)].filter(Boolean);
   const textureNames = new Set();
-  for (const model of [body, axle, ...wheels.map((wheel) => wheel.model)].filter(Boolean)) {
+  for (const model of models) {
     for (const name of model.textureNames ?? []) {
       if (name) {
         textureNames.add(name);
       }
     }
   }
-  for (const extra of isMtm1 ? [] : [manifest.shockTextureName, manifest.barTextureName]) {
+  for (const extra of hasChassisHardware ? [manifest.shockTextureName, manifest.barTextureName] : []) {
     if (extra) {
       textureNames.add(normalizeArchiveName(extra));
     }
   }
 
   const paletteContext = { podIndex, sessionId, opfsPodPath, extractionScope, extractedFiles, cache: new Map() };
+
+  if (isEvo) {
+    const textures = await loadEvoTextures(textureNames, models, paletteContext, warnings);
+    return finishAssembly({
+      body,
+      wheels,
+      textures,
+      manifest,
+      warnings,
+      extractedFiles,
+      models,
+      axles: [],
+      axleBars: [],
+      shocks: [],
+      driveshaft: null,
+      barTextureName: "",
+      shockTextureName: "",
+      lights: describeLights(manifest)
+    });
+  }
 
   const textures = [];
   for (const name of textureNames) {
@@ -172,36 +203,49 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       rightWheel: wheels.find((wheel) => wheel.key === "raxle.rtire.static_bpos")?.model ?? null
     }
   ];
-  const axlePlacements = isMtm1 ? [] : axlePairs.map((pair) => buildAxlePlacement(axle, pair));
   const frontAxleCenter = midpoint(axlePairs[0].leftAnchor, axlePairs[0].rightAnchor);
   const rearAxleCenter = midpoint(axlePairs[1].leftAnchor, axlePairs[1].rightAnchor);
-  const shocks = isMtm1 ? [] : buildShockDescriptors(frontAxleCenter, rearAxleCenter);
-  const axleBars = isMtm1 ? [] : buildAxleBarDescriptors(
-    frontAxleCenter,
-    rearAxleCenter,
-    manifest.axlebarOffset,
-    manifest.superiorAxlebarOffset
-  );
-  const driveshaft = isMtm1 ? null : buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos);
 
-  const lights = isMtm1
-    ? []
-    : (manifest.lights ?? [])
-      .filter((l) => l?.pos)
-      .map((l) => ({ pos: l.pos, radius: Math.max(l.bitmapRadius ?? 0.15, 0.1), index: l.index }));
+  return finishAssembly({
+    body,
+    wheels,
+    textures,
+    manifest,
+    warnings,
+    extractedFiles,
+    models,
+    axles: isMtm1 ? [] : axlePairs.map((pair) => buildAxlePlacement(axle, pair)),
+    axleBars: isMtm1 ? [] : buildAxleBarDescriptors(
+      frontAxleCenter,
+      rearAxleCenter,
+      manifest.axlebarOffset,
+      manifest.superiorAxlebarOffset
+    ),
+    shocks: isMtm1 ? [] : buildShockDescriptors(frontAxleCenter, rearAxleCenter),
+    driveshaft: isMtm1 ? null : buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos),
+    barTextureName: isMtm1 ? "" : (manifest.barTextureName ?? ""),
+    shockTextureName: isMtm1 ? "" : (manifest.shockTextureName ?? ""),
+    lights: isMtm1 ? [] : describeLights(manifest)
+  });
+}
 
-  for (const model of [body, axle, ...wheels.map((wheel) => wheel.model)].filter(Boolean)) {
+// Both assembly paths end the same way: fold each model's own parse warnings into the
+// assembly's list and hand the scene one shape.
+function finishAssembly({
+  body, wheels, textures, manifest, warnings, extractedFiles, models,
+  axles, axleBars, shocks, driveshaft, barTextureName, shockTextureName, lights
+}) {
+  for (const model of models) {
     warnings.push(...(model.warnings ?? []).map((warning) => `${model.name}: ${warning}`));
   }
-
   return {
     body,
-    axles: axlePlacements,
+    axles,
     axleBars,
     shocks,
     driveshaft,
-    barTextureName: isMtm1 ? "" : (manifest.barTextureName ?? ""),
-    shockTextureName: isMtm1 ? "" : (manifest.shockTextureName ?? ""),
+    barTextureName,
+    shockTextureName,
     wheels,
     scrapePoints: manifest.scrapePoints ?? [],
     lights,
@@ -209,6 +253,90 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     warnings,
     extractedFiles: [...new Set(extractedFiles)]
   };
+}
+
+function describeLights(manifest) {
+  return (manifest.lights ?? [])
+    .filter((light) => light?.pos)
+    .map((light) => ({ pos: light.pos, radius: Math.max(light.bitmapRadius ?? 0.15, 0.1), index: light.index }));
+}
+
+/*
+  Evo texture resolution. Each .SMF group names its diffuse map outright ("TRBLAZ.RAW",
+  "TrailBlazer.TIF"), and the Evo 2 groups additionally name a bump map, so nothing here has
+  to guess at a "_N" companion the way the HD MTM2 path does.
+
+  A .RAW needs its same-stem .ACT and, when one exists, its same-stem .OPA. Both are looked
+  up per texture: Evo has no archive-wide palette, so a missing .ACT is a hard failure for
+  that one texture rather than a reason to fall back to someone else's colours.
+*/
+async function loadEvoTextures(textureNames, models, context, warnings) {
+  const bumpByDiffuse = new Map();
+  for (const model of models) {
+    for (const mesh of model.meshes ?? []) {
+      if (mesh.textureName && mesh.bumpTextureName) {
+        bumpByDiffuse.set(mesh.textureName, mesh.bumpTextureName);
+      }
+    }
+  }
+
+  const textures = [];
+  for (const name of textureNames) {
+    try {
+      const decoded = await decodeEvoArtEntry(name, context);
+      const bumpName = bumpByDiffuse.get(name);
+      if (bumpName) {
+        try {
+          decoded.normal = await decodeEvoArtEntry(bumpName, context);
+        } catch (error) {
+          warnings.push(error.message);
+        }
+      }
+      textures.push(decoded);
+    } catch (error) {
+      warnings.push(error.message);
+    }
+  }
+  return textures;
+}
+
+async function decodeEvoArtEntry(textureName, context) {
+  const entry = findArtEntryByTitle(context.podIndex, textureName);
+  if (!entry) {
+    throw new Error(`Texture ${textureName} was referenced but not found in ART.`);
+  }
+  const sourceBytes = await readArchivedBytes(entry, context);
+  const isRaw = entry.title.endsWith(".RAW");
+  const actBytes = isRaw ? await readCompanionBytes(textureName, ".ACT", context) : null;
+  const opaBytes = isRaw ? await readCompanionBytes(textureName, ".OPA", context) : null;
+  const decoded = decodeEvoTexture(sourceBytes, actBytes, opaBytes, textureName);
+  decoded.name = textureName;
+  return decoded;
+}
+
+async function readCompanionBytes(textureName, extension, context) {
+  const entry = findArtEntry(context.podIndex, textureName, extension);
+  return entry ? readArchivedBytes(entry, context) : null;
+}
+
+async function readArchivedBytes(entry, context) {
+  const { sessionId, opfsPodPath, extractionScope, extractedFiles, cache } = context;
+  if (cache.has(entry.normalizedName)) {
+    return cache.get(entry.normalizedName);
+  }
+  const path = extractedPath(sessionId, extractionScope, entry.normalizedName);
+  await extractPodEntry(opfsPodPath, entry, path);
+  extractedFiles.push(path);
+  const bytes = new Uint8Array(await (await readFile(path)).arrayBuffer());
+  cache.set(entry.normalizedName, bytes);
+  return bytes;
+}
+
+// Evo models name their textures with the extension already attached, so the lookup keeps it
+// rather than substituting one the way the MTM path has to.
+function findArtEntryByTitle(podIndex, textureName) {
+  const title = normalizeArchiveName(textureName).split("/").pop() ?? "";
+  return findEntryByNormalizedName(podIndex, joinPath("ART", title)) ?? findEntryByTitle(podIndex, title);
 }
 
 function textureStem(name) {
@@ -377,31 +505,40 @@ function transformMeshPositions(positions, translate, scale) {
   return output;
 }
 
-function resolveSingleModelEntry(podIndex, requestedName, label, warnings) {
+function resolveSingleModelEntry(podIndex, requestedName, label, warnings, extension = ".BIN") {
   if (!requestedName) {
     warnings.push(`Manifest did not define a ${label} model name.`);
     return null;
   }
   const normalized = normalizeArchiveName(requestedName);
   const fullPath = normalized.startsWith("MODELS/") ? normalized : joinPath("MODELS", normalized);
-  const exact = findEntryByNormalizedName(podIndex, fullPath) ?? findEntryByNormalizedName(podIndex, replaceExtension(fullPath, ".BIN"));
+  const exact = findEntryByNormalizedName(podIndex, fullPath) ?? findEntryByNormalizedName(podIndex, replaceExtension(fullPath, extension));
   if (exact) {
     return exact;
   }
   const stem = textureStem(requestedName);
-  const appendedLods = findNumberedLodEntries(podIndex, stem);
-  if (appendedLods.length) {
-    warnings.push(`Resolved ${label} model ${requestedName} to full-stem LOD ${appendedLods[0].name}.`);
-    return appendedLods[0];
-  }
-  if (stem.length > 7) {
-    const legacyLods = findNumberedLodEntries(podIndex, stem.slice(0, 7));
-    if (legacyLods.length) {
-      warnings.push(`Resolved ${label} model ${requestedName} through the legacy offset-7 LOD name ${legacyLods[0].name}.`);
-      return legacyLods[0];
+  /*
+    The numbered-suffix search is an MTM convention, where a higher number is a HIGHER detail
+    model. Evo reads the opposite way - TRBLAZ.SMF is the full body and TRBLAZ0.SMF the
+    reduced one - so running it on an .SMF archive would pick the low-detail model whenever
+    the exact name missed. The exact name is present for every stock Evo truck, so the
+    fallback is simply not offered there.
+  */
+  if (extension === ".BIN") {
+    const appendedLods = findNumberedLodEntries(podIndex, stem);
+    if (appendedLods.length) {
+      warnings.push(`Resolved ${label} model ${requestedName} to full-stem LOD ${appendedLods[0].name}.`);
+      return appendedLods[0];
+    }
+    if (stem.length > 7) {
+      const legacyLods = findNumberedLodEntries(podIndex, stem.slice(0, 7));
+      if (legacyLods.length) {
+        warnings.push(`Resolved ${label} model ${requestedName} through the legacy offset-7 LOD name ${legacyLods[0].name}.`);
+        return legacyLods[0];
+      }
     }
   }
-  const candidates = findModelCandidatesByPrefix(podIndex, requestedName);
+  const candidates = findModelCandidatesByPrefix(podIndex, requestedName, extension);
   if (candidates.length === 1) {
     warnings.push(`Resolved ${label} model ${requestedName} by prefix to ${candidates[0].name}.`);
     return candidates[0];
@@ -442,33 +579,47 @@ function resolveMtm1WheelEntries(podIndex, tireModelName, warnings) {
   return { mapping, candidates: [entry] };
 }
 
-function resolveWheelEntries(podIndex, prefix, warnings) {
+function resolveWheelEntries(podIndex, prefix, warnings, extension = ".BIN") {
   const mapping = {};
   if (!prefix) {
     warnings.push("Manifest did not define tireModelBaseName.");
     return { mapping };
   }
-  const candidates = findModelCandidatesByPrefix(podIndex, prefix);
-  if (!candidates.length) {
+  const prefixMatches = findModelCandidatesByPrefix(podIndex, prefix, extension);
+  if (!prefixMatches.length) {
     warnings.push(`Could not resolve any tire models for prefix ${prefix}.`);
     return { mapping };
   }
 
+  /*
+    A bare prefix search also catches a longer, unrelated family: "CLASS3TIRE" matches
+    CLASS3TIREB16L as readily as CLASS3TIRE16L, and both score 16 on the detail-tier sort, so
+    which one a truck got came down to POD directory order. Candidates that are exactly the
+    prefix plus a detail tier and a side - the shape every stock tire set in MTM2, MTM2.1 and
+    both Evo games uses - are preferred, and the loose set is kept only as a fallback for an
+    archive that names its tires some other way.
+  */
+  const strictPattern = new RegExp(`^${escapeForRegExp(prefix.toUpperCase())}\\d+[FR]?[LR]\\${extension}$`, "i");
+  const strictMatches = prefixMatches.filter((entry) => strictPattern.test(entry.title));
+  const candidates = strictMatches.length ? strictMatches : prefixMatches;
+
   // Sort by numeric suffix descending so the highest-poly (largest number) model is first.
+  // Evo names its tire detail tiers the same way MTM2 does - BLZRTR08L/12L/16L - so the one
+  // rule covers both once the extension is substituted.
   const byNumber = (entry) => {
-    const m = entry.title.match(/(\d+)[LR]\.BIN$/i);
+    const m = entry.title.match(new RegExp(`(\\d+)[LR]\\${extension}$`, "i"));
     return m ? parseInt(m[1], 10) : 0;
   };
-  const left = candidates.filter((e) => e.title.endsWith("L.BIN")).sort((a, b) => byNumber(b) - byNumber(a));
-  const right = candidates.filter((e) => e.title.endsWith("R.BIN")).sort((a, b) => byNumber(b) - byNumber(a));
+  const left = candidates.filter((e) => e.title.endsWith(`L${extension}`)).sort((a, b) => byNumber(b) - byNumber(a));
+  const right = candidates.filter((e) => e.title.endsWith(`R${extension}`)).sort((a, b) => byNumber(b) - byNumber(a));
 
   const bestLeft = left[0] ?? null;
   const bestRight = right[0] ?? null;
   // MTM2 2.1 can provide four distinct high-detail wheel models: 16FL/16FR/16RL/16RR.
-  const enhancedFrontLeft = pickWheelCandidate(candidates, "16FL.BIN");
-  const enhancedFrontRight = pickWheelCandidate(candidates, "16FR.BIN");
-  const enhancedRearLeft = pickWheelCandidate(candidates, "16RL.BIN");
-  const enhancedRearRight = pickWheelCandidate(candidates, "16RR.BIN");
+  const enhancedFrontLeft = pickWheelCandidate(candidates, `16FL${extension}`);
+  const enhancedFrontRight = pickWheelCandidate(candidates, `16FR${extension}`);
+  const enhancedRearLeft = pickWheelCandidate(candidates, `16RL${extension}`);
+  const enhancedRearRight = pickWheelCandidate(candidates, `16RR${extension}`);
 
   if (enhancedFrontLeft || enhancedFrontRight || enhancedRearLeft || enhancedRearRight) {
     mapping["faxle.rtire.static_bpos"] = enhancedFrontRight ?? bestRight;
@@ -570,6 +721,10 @@ function buildSuperiorAxleBarSet(frontAxleCenter, rearAxleCenter, baseBarOffset 
   ];
 }
 
+function escapeForRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function pickWheelCandidate(candidates, suffix) {
   const upperSuffix = suffix.toUpperCase();
   return candidates.find((entry) => entry.title.toUpperCase().endsWith(upperSuffix)) ?? null;
@@ -605,7 +760,9 @@ async function decodeExtractedModel(entry, label, sessionId, opfsPodPath, extrac
   await extractPodEntry(opfsPodPath, entry, outputPath);
   extractedFiles.push(outputPath);
   const bytes = new Uint8Array(await (await readFile(outputPath)).arrayBuffer());
-  const model = decodeBinModel(bytes, entry.title);
+  // Both formats are chosen by content rather than by the manifest's declared extension, so
+  // an archive that mixes the two still loads.
+  const model = isSmfModel(bytes) ? decodeSmfModel(bytes, entry.title) : decodeBinModel(bytes, entry.title);
   model.partKey = label;
   return model;
 }

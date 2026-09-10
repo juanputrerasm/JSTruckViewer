@@ -133,14 +133,23 @@ export class ViewerScene {
         if (meshData.uvs?.length) {
           geometry.setAttribute("uv", new THREE.Float32BufferAttribute(buildDisplayUvs(meshData.uvs, diffuseMap), 2));
         }
-        // Legacy BIN truck/body meshes are wound opposite to what Three.js expects.
-        // Rendering the "back" side matches BinEdit/OpenGL, where front faces are culled.
+        /*
+          Legacy BIN truck/body meshes are wound opposite to what Three.js expects.
+          Rendering the "back" side matches BinEdit/OpenGL, where front faces are culled.
+          .SMF geometry is emitted into the same convention, so both share this path.
+
+          MTM transparency is a colour key, so a transparent MTM mesh is alpha-tested. Evo
+          ships a real 8-bit opacity plane and only flags its glass and light lenses, so
+          those blend instead - alpha-testing them at 0.5 would turn a soft lens into a
+          stencil, and there are few enough of them for sorting to stay well behaved.
+        */
+        const blended = !!meshData.blend;
         const material = this.createSurfaceMaterial({
           color: diffuseMap ? 0xffffff : (meshData.color ?? 0x9b9b9b),
           map: diffuseMap,
           side: THREE.BackSide,
           transparent: !!meshData.transparent,
-          alphaTest: meshData.transparent ? 0.5 : 0,
+          alphaTest: meshData.transparent && !blended ? 0.5 : 0,
           materialData: meshData.material,
           material2: meshData.material2,
           normalMap
@@ -493,7 +502,9 @@ export class ViewerScene {
       transparent: resolvedTransparent,
       opacity: resolvedTransparent ? clamp01(materialData?.baseAlpha ?? 1) : 1,
       alphaTest: resolvedAlphaTest,
-      depthWrite: alphaTested || !(flags & MRGLMAT_NOZWRITE),
+      // A blended surface with no MRGL material - Evo glass and light lenses - must not
+      // write depth, or the exterior pane hides the interior one by draw order alone.
+      depthWrite: materialData ? (alphaTested || !(flags & MRGLMAT_NOZWRITE)) : !resolvedTransparent,
       blending: flags & MRGLMAT_ADDITIVE ? THREE.AdditiveBlending : THREE.NormalBlending
     };
     const lit = this.sceneLightingEnabled && (!materialData || !!(flags & 0x0001));
@@ -526,9 +537,18 @@ export class ViewerScene {
   }
 }
 
+/*
+  Builds the three variants of one decoded texture.
+
+  "opaque" is what an untagged mesh samples, and it forces full coverage so a stray alpha
+  value cannot punch a hole in solid bodywork. "cutout" is what a transparent mesh samples,
+  and how its coverage is derived depends on where the coverage came from: MTM textures have
+  no alpha at all, so black is the colour key, while Evo textures already carry an authored
+  opacity plane and are passed through untouched.
+*/
 function createDataTexture(texture, mode = "opaque", smooth = false) {
   const data = new Uint8Array(texture.rgba);
-  if (mode === "opaque" && texture.sourceFormat === "RAW") {
+  if (mode === "opaque" && (texture.sourceFormat === "RAW" || texture.sourceFormat === "EVO")) {
     for (let i = 3; i < data.length; i += 4) {
       data[i] = 255;
     }

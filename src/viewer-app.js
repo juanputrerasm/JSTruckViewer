@@ -159,7 +159,7 @@ export class TruckViewerApp {
   }
 
   renderIdleState() {
-    this.setMtm2PartTogglesEnabled(true);
+    this.setChassisPartTogglesEnabled(true);
     this.manifestSummary.innerHTML = "";
     this.warnings.innerHTML = "";
     this.warningsPanel.hidden = true;
@@ -198,27 +198,47 @@ export class TruckViewerApp {
 
     this.truckTitle.textContent = session.manifest.truckName || "";
 
-    // MTM1 manifests stop at the body, tires, anchors and metadata, so the axle, suspension
-    // and light rows are omitted rather than shown as "<missing>" on every classic truck.
+    /*
+      MTM1 manifests stop at the body, tires, anchors and metadata, so the axle, suspension
+      and light rows are omitted rather than shown as "<missing>" on every classic truck.
+
+      4x4 Evolution has the same gap in the chassis hardware but a much richer showroom
+      record - make, model, class, year, price, team and paint schemes - so it drops the same
+      rows, keeps its lights, and adds its own.
+    */
     const manifest = session.manifest;
     const isMtm1 = manifest.formatVersion === "MTM1";
-    this.setMtm2PartTogglesEnabled(!isMtm1);
+    const isEvo = manifest.formatVersion === "EVO1" || manifest.formatVersion === "EVO2";
+    const specs = manifest.specs ?? {};
+    this.setChassisPartTogglesEnabled(!isMtm1 && !isEvo, { lights: !isMtm1 });
     this.manifestSummary.innerHTML = renderKeyValues([
-      ["Format", manifest.formatVersion || "MTM2"],
+      ["Format", formatLabel(manifest)],
       ["Truck name", manifest.truckName || "<missing>"],
+      ...(isEvo ? [
+        ["Make", specs.truckMake || "<none>"],
+        ["Model", specs.truckModel || "<none>"],
+        ["Class", specs.truckClass || "<none>"],
+        ["Model year", formatNumber(specs.truckModelYear)],
+        ["Price", formatPrice(specs.truckCost)],
+        ...(specs.teamRequirement ? [["Team", specs.teamRequirement]] : [])
+      ] : []),
       [isMtm1 ? "Truck Model Name" : "Model Base Name", manifest.truckModelBaseName || "<missing>"],
       ["Tire Model Name", manifest.tireModelBaseName || "<missing>"],
-      ...(isMtm1 ? [] : [
+      ...(isMtm1 || isEvo ? [] : [
         ["Axle Model Name", manifest.axleModelName || "<missing>"],
         ["Shock Texture Name", manifest.shockTextureName || "<none>"],
         ["Bar Texture Name", manifest.barTextureName || "<none>"],
         ["Driveshaft Pos", formatVec3(manifest.driveshaftPos)],
         ["Axle Bar Offset", formatVec3(manifest.axlebarOffset)]
       ]),
-      ["Instrument Cluster", manifest.instrumentCluster || "<none>"],
+      ...(isEvo ? [] : [["Instrument Cluster", manifest.instrumentCluster || "<none>"]]),
       ["Wave files", manifest.waveFiles.join(", ") || "<none>"],
       ...(isMtm1 ? [] : [["Lights", String(manifest.numberOfLights ?? 0)]]),
       ["Scrape points", String(manifest.scrapePoints.length)],
+      ...(isEvo ? [
+        ["Paint schemes", formatPaintSchemes(manifest.colors)],
+        ["Stock parts", (manifest.stockParts ?? []).join(", ") || "<none>"]
+      ] : []),
       ["Source", session.sourceMode === "disk" ? "disk" : "URL"]
     ]);
 
@@ -285,19 +305,20 @@ export class TruckViewerApp {
     }
   }
 
-  // Axles, axle bars, shocks, the driveshaft and lights only exist on MTM2 trucks. Their
-  // scene groups stay empty for MTM1, so the matching toggles are greyed out instead of
-  // looking broken.
-  setMtm2PartTogglesEnabled(enabled) {
-    for (const toggle of [
-      this.toggleAxle,
-      this.toggleAxleBars,
-      this.toggleShocks,
-      this.toggleDriveshaft,
-      this.toggleLights
-    ]) {
-      toggle.disabled = !enabled;
-      toggle.closest("label")?.classList.toggle("control-unavailable", !enabled);
+  // Axles, axle bars, shocks and the driveshaft only exist on MTM2 trucks; lights exist on
+  // MTM2 and 4x4 Evolution but not MTM1. The matching scene groups stay empty otherwise, so
+  // the toggles are greyed out instead of looking broken.
+  setChassisPartTogglesEnabled(enabled, { lights = enabled } = {}) {
+    const states = [
+      [this.toggleAxle, enabled],
+      [this.toggleAxleBars, enabled],
+      [this.toggleShocks, enabled],
+      [this.toggleDriveshaft, enabled],
+      [this.toggleLights, lights]
+    ];
+    for (const [toggle, available] of states) {
+      toggle.disabled = !available;
+      toggle.closest("label")?.classList.toggle("control-unavailable", !available);
     }
   }
 
@@ -391,6 +412,40 @@ function formatTruckCount(count) {
 
 function formatPodCount(count) {
   return `${count} ${count === 1 ? "POD" : "PODs"}`;
+}
+
+const FORMAT_LABELS = {
+  EVO1: "4x4 Evolution (TRK v6)",
+  EVO2: "4x4 Evolution 2 (TRK v7)"
+};
+
+function formatLabel(manifest) {
+  return FORMAT_LABELS[manifest.formatVersion] ?? manifest.formatVersion ?? "MTM2";
+}
+
+function formatNumber(value) {
+  return Number.isFinite(Number(value)) && value !== "" ? String(Math.round(Number(value))) : "<none>";
+}
+
+function formatPrice(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? `$${Math.round(amount).toLocaleString("en-US")}` : "<none>";
+}
+
+// The paint list is the garage's colour picker: an HSV shift plus the RGB swatch shown for
+// it. Only the swatch is reported - the viewer does not repaint the body, so claiming a
+// colour it has not applied would be misleading.
+function formatPaintSchemes(colors) {
+  if (!colors?.length) {
+    return "<none>";
+  }
+  return colors
+    .map((color) => `#${[color.red, color.green, color.blue].map((c) => clampByte(c).toString(16).padStart(2, "0")).join("")}`)
+    .join(", ");
+}
+
+function clampByte(value) {
+  return Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
 }
 
 function formatVec3(vec) {
