@@ -33,7 +33,6 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 | Content | Support |
 |---|---|
 | POD1 | Original Terminal Reality POD directory layout |
-| POD1-64 (Extended POD1) | POD1-compatible layout with 64-byte entry names |
 | POD2 | Signed and indexed archive used by 4x4 Evolution 1 and 2 |
 | ZIP | One or more POD archives in a single pack |
 | TRK (MTM2, MTM2.1) | Truck manifest, component references, anchors, lights, and scrape points |
@@ -46,9 +45,7 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 | TIFF | 4x4 Evolution 2 paletted diffuse textures and true-colour normal maps |
 | PNG and TGA | High-definition diffuse and normal textures |
 
-“Extended POD1” is not an official new POD version. It identifies the POD1-compatible directory layout whose name field is widened from 32 to 64 bytes.
-
-Both POD1 layouts use the same bounds and path validation. Optional `.ACT` palette metadata stored after `.RAW` paths is parsed without allowing trailing field bytes to affect entry lookup.
+POD1 has exactly one directory layout: 40-byte entries of `char name[32]`, `int32 size`, `int32 offset`, holding paths of up to 31 characters. A directory table that does not validate as 40-byte records is a malformed archive and is refused. See [POD1 format](docs/POD1_FORMAT.md). Optional `.ACT` palette metadata stored after `.RAW` paths is parsed without allowing trailing field bytes to affect entry lookup.
 
 ## MTM1 trucks support
 
@@ -165,7 +162,7 @@ src/
 
 ## Format documentation
 
-- [POD1-64 / Extended POD1](docs/POD1_64_FORMAT.md)
+- [POD1 format](docs/POD1_FORMAT.md)
 - [BIN HD / Extended BIN](docs/BIN_HD_FORMAT.md)
 - [MTM2.1 / TRK 2.1](docs/TRK_2_1_FORMAT.md)
 - [MTM1 truck format](docs/MTM1_TRK_FORMAT.md)

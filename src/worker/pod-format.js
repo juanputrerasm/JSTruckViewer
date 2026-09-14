@@ -5,8 +5,7 @@ const POD1_HEADER_SIZE = 84;
 const ENTRY_NAME_SIZE = 32;
 const COMMENT_SIZE = 80;
 const ENTRY_SIZE = 40;
-const LONG_ENTRY_NAME_SIZE = 64;
-const LONG_ENTRY_SIZE = 72;
+const MAX_NAME_LENGTH = ENTRY_NAME_SIZE - 1;   // 31; the NUL takes the last byte
 const MAX_REASONABLE_ITEMS = 8192;
 
 /*
@@ -58,11 +57,9 @@ export async function indexPodFile(opfsPodPath) {
   }
   const decoder = new TextDecoder("latin1");
   const comment = decodeNullTerminated(decoder, new Uint8Array(headerBuffer, 4, COMMENT_SIZE));
-  const legacy = await tryReadDirectory(file, itemCount, ENTRY_NAME_SIZE, ENTRY_SIZE, decoder);
-  if (legacy) return { format: "POD1", comment, entries: legacy };
-  const extended = await tryReadDirectory(file, itemCount, LONG_ENTRY_NAME_SIZE, LONG_ENTRY_SIZE, decoder);
-  if (extended) return { format: "Extended POD1", comment, entries: extended };
-  throw new Error("POD1 directory is neither a valid 32-byte nor 64-byte layout.");
+  const entries = await tryReadDirectory(file, itemCount, decoder);
+  if (!entries) throw new Error("POD1 directory does not validate as 40-byte entries.");
+  return { format: "POD1", comment, entries };
 }
 
 async function readPod2(file, opfsPodPath) {
@@ -132,19 +129,25 @@ async function readPod2(file, opfsPodPath) {
   return { format: "POD2", comment, entries };
 }
 
-async function tryReadDirectory(file, itemCount, nameSize, entrySize, decoder) {
-  const tableBytes = itemCount * entrySize;
+// A POD1 directory record is 40 bytes: char name[32], int32 size, int32 offset. That is
+// the only layout there is, so a table that does not validate as one is a refused archive.
+async function tryReadDirectory(file, itemCount, decoder) {
+  const tableBytes = itemCount * ENTRY_SIZE;
   if (POD1_HEADER_SIZE + tableBytes > file.size) return null;
   const tableBuffer = await file.slice(POD1_HEADER_SIZE, POD1_HEADER_SIZE + tableBytes).arrayBuffer();
   const tableView = new DataView(tableBuffer);
   const tableBytesView = new Uint8Array(tableBuffer);
   const entries = [];
   for (let i = 0; i < itemCount; i += 1) {
-    const offset = i * entrySize;
-    const { name, paletteName, pathTerminated } = decodePod1NameField(decoder, tableBytesView, offset, nameSize);
-    const length = tableView.getUint32(offset + nameSize, true);
-    const dataOffset = tableView.getUint32(offset + nameSize + 4, true);
-    if (!pathTerminated || !name || !isPlausibleArchivePath(name) || dataOffset > file.size || length > file.size - dataOffset) {
+    const offset = i * ENTRY_SIZE;
+    const { name, paletteName, pathTerminated } = decodePod1NameField(decoder, tableBytesView, offset, ENTRY_NAME_SIZE);
+    // Signed, as the engine reads them: a negative size or pointer is a rejected volume,
+    // not a 2 GB one.
+    const length = tableView.getInt32(offset + ENTRY_NAME_SIZE, true);
+    const dataOffset = tableView.getInt32(offset + ENTRY_NAME_SIZE + 4, true);
+    if (!pathTerminated || !name || !isPlausibleArchivePath(name)
+      || length < 0 || dataOffset < 0
+      || dataOffset > file.size || length > file.size - dataOffset) {
       return null;
     }
     entries.push({
@@ -231,5 +234,5 @@ function trimPodString(value) {
 }
 
 function isPlausibleArchivePath(name) {
-  return !/[\0-\x1f]/.test(name) && !name.includes(":") && name.length <= LONG_ENTRY_NAME_SIZE - 1;
+  return !/[\0-\x1f]/.test(name) && !name.includes(":") && name.length <= MAX_NAME_LENGTH;
 }

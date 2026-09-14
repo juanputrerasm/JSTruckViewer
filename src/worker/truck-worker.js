@@ -215,14 +215,16 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     extractedFiles,
     models,
     axles: isMtm1 ? [] : axlePairs.map((pair) => buildAxlePlacement(axle, pair)),
-    axleBars: isMtm1 ? [] : buildAxleBarDescriptors(
+    axleBars: isMtm1 || suppressesAxleBars(manifest.axlebarOffset) ? [] : buildAxleBarDescriptors(
       frontAxleCenter,
       rearAxleCenter,
       manifest.axlebarOffset,
       manifest.superiorAxlebarOffset
     ),
     shocks: isMtm1 ? [] : buildShockDescriptors(frontAxleCenter, rearAxleCenter),
-    driveshaft: isMtm1 ? null : buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos),
+    driveshaft: isMtm1 || suppressesDriveshaft(manifest.driveshaftPos)
+      ? null
+      : buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos),
     barTextureName: isMtm1 ? "" : (manifest.barTextureName ?? ""),
     shockTextureName: isMtm1 ? "" : (manifest.shockTextureName ?? ""),
     lights: isMtm1 ? [] : describeLights(manifest)
@@ -253,6 +255,32 @@ function finishAssembly({
     warnings,
     extractedFiles: [...new Set(extractedFiles)]
   };
+}
+
+/*
+  How a small-tire truck says "no axle bars" and "no driveshaft".
+
+  MTM2's axle bars and driveshaft are monster-truck hardware, and a car body has nowhere to
+  hang them. There is no flag for turning them off, so the community idiom is to put the
+  mount somewhere the geometry cannot be seen: the Dodge Viper GTS-R ships an axlebarOffset of
+  "-2.000000,999.000000,0.000000" with an all-zero driveshaftPos.
+
+  Taken literally that draws a pair of 999-foot columns, which is what this viewer used to do.
+  The thresholds come from the stock corpus: across all 20 trucks in TRUCK2.POD the axle-bar
+  mount sits 2.156 to 3.250 ft from the body and not one of them has a zero driveshaft, so
+  anything past 50 ft - further than a truck is long - is a sentinel rather than a position.
+*/
+const AXLE_BAR_SENTINEL_DISTANCE = 50;
+
+function suppressesAxleBars(offset) {
+  if (!offset) return false;
+  return Math.abs(offset.x ?? 0) >= AXLE_BAR_SENTINEL_DISTANCE
+    || Math.abs(offset.y ?? 0) >= AXLE_BAR_SENTINEL_DISTANCE
+    || Math.abs(offset.z ?? 0) >= AXLE_BAR_SENTINEL_DISTANCE;
+}
+
+function suppressesDriveshaft(position) {
+  return !!position && !(position.x ?? 0) && !(position.y ?? 0) && !(position.z ?? 0);
 }
 
 function describeLights(manifest) {

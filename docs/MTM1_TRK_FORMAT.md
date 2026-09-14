@@ -113,4 +113,4 @@ not change how an MTM2 truck renders.
 
 - [MTM2.1 / TRK 2.1](TRK_2_1_FORMAT.md)
 - [BIN HD / Extended BIN](BIN_HD_FORMAT.md)
-- [POD1-64 / Extended POD1](POD1_64_FORMAT.md)
+- [POD1 format](POD1_FORMAT.md)
