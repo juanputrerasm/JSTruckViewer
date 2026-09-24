@@ -37,7 +37,7 @@ export class ViewerScene {
     );
 
     this.sceneLightingEnabled = false;
-    this.smoothTexturesEnabled = false;
+    this.smoothTexturesEnabled = true;
     this.sceneLightPosition = "top";
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
     this.directionalLight = new THREE.DirectionalLight(0xffffff, 1.8);
@@ -156,6 +156,33 @@ export class ViewerScene {
         });
         const surfaceMesh = new THREE.Mesh(geometry, material);
         group.add(surfaceMesh);
+        /*
+          An Evo "glass" group is not all glass. The transparent flag is set per group, and the
+          group carries whatever shares the window's texture: on the 4x4 EvoR Nissan Xterra
+          (TRUCK/XTERXE4.TRK) the two blended groups of NISSANXTER.SMF run from the sills to the
+          roof, door panels included, with the opacity plane saying which texels are glass.
+
+          A blended pass writes no depth, so where two such groups overlap three.js's per-object
+          sort decides which one shows. From a low side angle the inner door panel sorted last
+          and painted the seat over the outer door skin: a hole that came and went with the camera.
+
+          So the fully opaque texels get a pass of their own, alpha-tested near full coverage, in
+          the opaque queue and writing depth like any bodywork. The blended pass still draws the
+          translucent texels; over the solid ones it repaints the same colour at the same depth.
+          The same idea as the TEXSOLID pass below, for Evo's opacity plane.
+        */
+        if (blended && !meshData.material && textureEntry) {
+          const opaqueTexels = this.createSurfaceMaterial({
+            color: 0xffffff,
+            map: textureEntry.cutout,
+            side: THREE.BackSide,
+            alphaTest: 0.98,
+            normalMap
+          });
+          const opaqueMesh = new THREE.Mesh(geometry, opaqueTexels);
+          opaqueMesh.userData.isOpaqueTexelPass = true;
+          group.add(opaqueMesh);
+        }
         if (meshData.material?.flags & MRGLMAT_TEXSOLID) {
           const solidPass = this.createSurfaceMaterial({
             color: diffuseMap ? 0xffffff : (meshData.color ?? 0x9b9b9b),
@@ -285,11 +312,11 @@ export class ViewerScene {
         if ("normalMap" in material) {
           material.normalMap = this.texturesEnabled ? material.userData.originalNormalMap : null;
         }
-        material.wireframe = this.wireframeEnabled && !textureActive && !mesh.userData.isMaterialSolidPass;
+        material.wireframe = this.wireframeEnabled && !textureActive && !isExtraPass(mesh);
         material.needsUpdate = true;
       }
 
-      if (mesh.userData.isMaterialSolidPass) {
+      if (isExtraPass(mesh)) {
         mesh.visible = !this.wireframeEnabled || hasActiveTexture;
         continue;
       }
@@ -535,6 +562,12 @@ export class ViewerScene {
     const [x, y, z] = positions[this.sceneLightPosition] ?? positions.top;
     this.directionalLight.position.set(x, y, z);
   }
+}
+
+// A second draw of a mesh already drawn once -- the TEXSOLID pass or the Evo opaque-texel
+// pass. It shares its geometry with the first, so it gets no wireframe of its own.
+function isExtraPass(mesh) {
+  return !!(mesh.userData.isMaterialSolidPass || mesh.userData.isOpaqueTexelPass);
 }
 
 /*

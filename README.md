@@ -6,7 +6,7 @@
 [![GitHub Pages](https://img.shields.io/badge/demo-GitHub%20Pages-222?logo=github)](https://juanputrerasm.github.io/JSTruckViewer/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-**A browser-based 3D truck viewer for Monster Truck Madness 1 and 2 and 4x4 Evolution 1 and 2.**
+**A browser-based 3D truck viewer for Monster Truck Madness 1 & 2 and 4x4 Evolution 1 & 2.**
 
 JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manifests, decodes the referenced models and textures, and assembles a complete truck in Three.js. Classic MTM1 trucks, modern MTM2 trucks and both generations of 4x4 Evolution all load from the same archive. All archive processing happens locally in the browser.
 
@@ -18,15 +18,15 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 
 ## Features
 
-- **POD and ZIP loading** — open a local archive, paste a URL, or autoload one through a query parameter.
-- **Multi-truck archives** — discover every `TRUCK/*.TRK` manifest and switch trucks without reopening the archive.
-- **Multi-POD ZIP packs** — stage and search all POD members contained in a ZIP.
-- **Complete truck assembly** — render the body, four wheels, axles, axle bars, shocks, driveshaft, lights, and scrape points.
-- **MTM1 and MTM2 trucks** — classic MTM1 manifests are detected automatically and assembled as body plus four tires.
-- **4x4 Evolution 1 and 2 trucks** — POD2 archives, TRK v6 and v7 manifests, SMF models, and Evo's paletted and TIFF textures with their real opacity channels.
-- **Interactive inspection** — orbit, pan, zoom, reset the camera, change lighting and background, toggle parts, textures, smoothing, wireframe, and gravity.
-- **Screenshot export** — save the current viewport as a JPEG.
-- **Client-side operation** — archives and extracted assets remain in temporary browser storage.
+- **POD and ZIP loading**: open a local archive, paste a URL, or autoload one through a query parameter.
+- **Multi-truck archives**: discover every `TRUCK/*.TRK` manifest and switch trucks without reopening the archive.
+- **Multi-POD ZIP packs**: stage and search all POD members contained in a ZIP.
+- **Complete truck assembly**: render the body, four wheels, axles, axle bars, shocks, driveshaft, lights, and scrape points.
+- **MTM1 and MTM2 trucks**: classic MTM1 manifests are detected automatically and assembled as body plus four tires.
+- **4x4 Evo 1 & 2 trucks**: POD2 archives, TRK v6 and v7 manifests, SMF models, and Evo's paletted and TIFF textures with their real opacity channels.
+- **Interactive inspection**: orbit, pan, zoom, reset the camera, change lighting and background, toggle parts, textures, smoothing, wireframe, and gravity.
+- **Screenshot export**: save the current viewport as a JPEG.
+- **Client-side operation**: archives and extracted assets remain in temporary browser storage.
 
 ## Supported content
 
@@ -39,11 +39,11 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 | TRK (MTM1) | Classic manifest: body, one tire model, anchors, and scrape points |
 | TRK (v6, v7) | 4x4 Evolution 1 and 2 manifest: showroom data, vec3 anchors, counted lists, and paint schemes |
 | BIN | Classic and updated MTM2 model records, and the MTM1 records that share them |
-| SMF | 4x4 Evolution "C3DModel" geometry, with per-group materials and bump-map references |
+| SMF | 4x4 Evo "C3DModel" geometry, with per-group materials and bump-map references |
 | RAW + ACT | Legacy paletted textures, including the shared MTM1 METALCR2 palette |
 | RAW + ACT + OPA | 4x4 Evolution paletted textures with their 8-bit opacity plane |
-| TIFF | 4x4 Evolution 2 paletted diffuse textures and true-colour normal maps |
-| PNG and TGA | High-definition diffuse and normal textures |
+| TIFF | 4x4 Evo 2 paletted diffuse textures and true-colour normal maps |
+| PNG and TGA | MTM2 CommPatch 3 High-definition diffuse and normal textures |
 
 POD1 has exactly one directory layout: 40-byte entries of `char name[32]`, `int32 size`, `int32 offset`, holding paths of up to 31 characters. A directory table that does not validate as 40-byte records is a malformed archive and is refused. See [POD1 format](docs/POD1_FORMAT.md). Optional `.ACT` palette metadata stored after `.RAW` paths is parsed without allowing trailing field bytes to affect entry lookup.
 
@@ -51,7 +51,7 @@ POD1 has exactly one directory layout: 40-byte entries of `char name[32]`, `int3
 
 A manifest whose first line is the bare `truckName` label, rather than an `MTM2` or `MTM2.1` header, is read as MTM1. MTM1 trucks name their body and tire models by full file name, reuse one tire model on all four corners, and have no axle model, axle bars, shocks, driveshaft, or lights. The viewer skips those parts instead of reporting them as missing, and greys out the toggles that cannot apply.
 
-Palette resolution follows what the games actually do. A `RAW` texture uses its same-name `.ACT` when the archive provides one, otherwise `METALCR2.ACT`. MTM2 archives supply a same-name palette for practically every texture, so they resolve at the first step and are unaffected.
+Palette resolution follows what the games actually do. A `RAW` texture uses its same-name `.ACT` when the archive provides one, otherwise `METALCR2.ACT` is used. MTM2 archives supply a same-name palette for practically every texture, so they resolve at the first step and are unaffected.
 
 See [MTM1 truck format](docs/MTM1_TRK_FORMAT.md) for the field-by-field comparison.
 
@@ -157,8 +157,8 @@ src/
 
 ## Related projects
 
-- [JSPod](https://github.com/juanputrerasm/JSPod) — browser-based POD archive and individual-asset viewer.
-- [KPodman](https://github.com/juanputrerasm/KPodman) — desktop POD archive manager.
+- [JSPod](https://github.com/juanputrerasm/JSPod) browser-based POD archive and individual-asset viewer.
+- [JSTrackViewer](https://github.com/juanputrerasm/JSTrackViewer) browser-based POD archive track viewer.
 
 ## Format documentation
 
@@ -173,4 +173,4 @@ Developed by **Juan Pablo Utreras** for the Monster Truck Madness Guild.
 
 Released under the [Apache License 2.0](LICENSE).
 
-Monster Truck Madness and Terminal Reality are trademarks of their respective owners. This project is an independent community tool and is not affiliated with or endorsed by them.
+Monster Truck Madness, 4x4 Evolution and Terminal Reality are trademarks of their respective owners. This project is an independent community tool and is not affiliated with or endorsed by them.
