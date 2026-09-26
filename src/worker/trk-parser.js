@@ -1,4 +1,5 @@
 import { isEvoManifest, parseEvoManifest } from "./evo/evo-trk-parser.js";
+import { isCprCarManifest, parseCprCarManifest } from "./cpr/car-parser.js";
 
 export function parseTruckManifestText(text) {
   const lines = text
@@ -13,6 +14,9 @@ export function parseTruckManifestText(text) {
   // worth its own reader rather than more branches in the MTM one.
   if (isEvoManifest(lines)) {
     return parseEvoManifest(lines);
+  }
+  if (isCprCarManifest(lines)) {
+    return parseCprCarManifest(lines);
   }
 
   const headerLine = lines[0] ?? "";

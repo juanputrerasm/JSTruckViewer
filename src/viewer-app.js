@@ -27,6 +27,10 @@ export class TruckViewerApp {
     this.resetCameraButton.addEventListener("click", () => this.scene.resetCamera());
     this.saveScreenshotButton.addEventListener("click", () => this.handleSaveScreenshot());
     this.truckSelect.addEventListener("change", () => this.handleTruckSelection());
+    this.cprWingPackage.addEventListener("change", () => {
+      this.scene.setCprWingPackage(this.cprWingPackage.value);
+      this.applySceneToggles();
+    });
     this.backgroundColor.addEventListener("input", () => this.scene.setBackgroundColor(this.backgroundColor.value));
     this.lightPosition.addEventListener("change", () => this.scene.setSceneLightPosition(this.lightPosition.value));
     this.toggleTextures.addEventListener("change", () => this.scene.setTexturesEnabled(this.toggleTextures.checked));
@@ -71,6 +75,8 @@ export class TruckViewerApp {
     this.saveScreenshotButton = $("save-screenshot-button");
     this.backgroundColor = $("background-color");
     this.lightPosition = $("light-position");
+    this.cprWingPackageControl = $("cpr-wing-package-control");
+    this.cprWingPackage = $("cpr-wing-package");
     this.toggleTextures = $("toggle-textures");
     this.toggleSmoothTextures = $("toggle-smooth-textures");
     this.toggleWireframe = $("toggle-wireframe");
@@ -132,7 +138,7 @@ export class TruckViewerApp {
 
   async loadFromStaged(staged, successMessage) {
     if (staged.trkEntries.length === 0) {
-      throw new Error("No TRUCK/*.TRK files were found in the POD.");
+      throw new Error("No TRUCK/*.TRK or VEHICLE/*.CAR files were found in the POD.");
     }
     this.stagedSession = staged;
     const firstEntry = staged.trkEntries[0];
@@ -180,6 +186,8 @@ export class TruckViewerApp {
     this.warningsPanel.hidden = true;
     this.hideTruckPicker();
     this.truckTitle.textContent = "";
+    this.cprWingPackageControl.hidden = true;
+    this.document.title = "JSTruckViewer";
   }
 
   renderTruckPicker(entries, selectedNormalizedName = "") {
@@ -207,11 +215,19 @@ export class TruckViewerApp {
       return;
     }
 
+    const manifest = session.manifest;
+    const isMtm1 = manifest.formatVersion === "MTM1";
+    const isEvo = manifest.formatVersion === "EVO1" || manifest.formatVersion === "EVO2";
+    const isCpr = manifest.formatVersion === "CPR";
+    const hasCprWingPackages = isCpr && (session.assembly.body?.wingPackages?.length ?? 0) > 1;
+    this.cprWingPackageControl.hidden = !hasCprWingPackages;
+    this.scene.setCprWingPackage(hasCprWingPackages ? this.cprWingPackage.value : "road-course", { rerender: false });
     this.scene.setGravityEnabled(this.toggleGravity.checked, { rerender: false });
     this.scene.setAssembly(session.assembly, { fitCamera: options.fitCamera !== false });
     this.applySceneToggles();
 
     this.truckTitle.textContent = session.manifest.truckName || "";
+    this.document.title = buildDocumentTitle(manifest);
 
     /*
       MTM1 manifests stop at the body, tires, anchors and metadata, so the axle, suspension
@@ -221,14 +237,11 @@ export class TruckViewerApp {
       record - make, model, class, year, price, team and paint schemes - so it drops the same
       rows, keeps its lights, and adds its own.
     */
-    const manifest = session.manifest;
-    const isMtm1 = manifest.formatVersion === "MTM1";
-    const isEvo = manifest.formatVersion === "EVO1" || manifest.formatVersion === "EVO2";
     const specs = manifest.specs ?? {};
-    this.setChassisPartTogglesEnabled(!isMtm1 && !isEvo, { lights: !isMtm1 });
+    this.setChassisPartTogglesEnabled(!isMtm1 && !isEvo && !isCpr, { lights: !isMtm1 && !isCpr });
     this.manifestSummary.innerHTML = renderKeyValues([
       ["Format", formatLabel(manifest)],
-      ["Truck name", manifest.truckName || "<missing>"],
+      [isCpr ? "Vehicle name" : "Truck name", manifest.truckName || "<missing>"],
       ...(isEvo ? [
         ["Make", specs.truckMake || "<none>"],
         ["Model", specs.truckModel || "<none>"],
@@ -237,9 +250,14 @@ export class TruckViewerApp {
         ["Price", formatPrice(specs.truckCost)],
         ...(specs.teamRequirement ? [["Team", specs.teamRequirement]] : [])
       ] : []),
-      [isMtm1 ? "Truck Model Name" : "Model Base Name", manifest.truckModelBaseName || "<missing>"],
-      ["Tire Model Name", manifest.tireModelBaseName || "<missing>"],
-      ...(isMtm1 || isEvo ? [] : [
+      [isCpr ? "Vehicle Model Name" : isMtm1 ? "Truck Model Name" : "Model Base Name", manifest.truckModelBaseName || "<missing>"],
+      [isCpr ? "Tire Model Names" : "Tire Model Name", isCpr ? (manifest.tireModelNames ?? []).join(", ") : (manifest.tireModelBaseName || "<missing>")],
+      ...(isCpr ? [
+        ["Helmet Model Name", manifest.helmetModelName || "<none>"],
+        ["Helmet Pos", formatVec3(manifest.helmetPosition)],
+        ["Pace car", manifest.paceCarFlag ? "yes" : "no"]
+      ] : []),
+      ...(isMtm1 || isEvo || isCpr ? [] : [
         ["Axle Model Name", manifest.axleModelName || "<missing>"],
         ["Shock Texture Name", manifest.shockTextureName || "<none>"],
         ["Bar Texture Name", manifest.barTextureName || "<none>"],
@@ -248,7 +266,7 @@ export class TruckViewerApp {
       ]),
       ...(isEvo ? [] : [["Instrument Cluster", manifest.instrumentCluster || "<none>"]]),
       ["Wave files", manifest.waveFiles.join(", ") || "<none>"],
-      ...(isMtm1 ? [] : [["Lights", String(manifest.numberOfLights ?? 0)]]),
+      ...(isMtm1 || isCpr ? [] : [["Lights", String(manifest.numberOfLights ?? 0)]]),
       ["Scrape points", String(manifest.scrapePoints.length)],
       ...(isEvo ? [
         ["Paint schemes", formatPaintSchemes(manifest.colors)],
@@ -312,6 +330,7 @@ export class TruckViewerApp {
       this.saveScreenshotButton,
       this.backgroundColor,
       this.lightPosition,
+      this.cprWingPackage,
       this.toggleSceneLighting,
       this.urlInput,
       this.truckSelect
@@ -321,7 +340,7 @@ export class TruckViewerApp {
   }
 
   // Axles, axle bars, shocks and the driveshaft only exist on MTM2 trucks; lights exist on
-  // MTM2 and 4x4 Evolution but not MTM1. The matching scene groups stay empty otherwise, so
+  // MTM2 and 4x4 Evolution but not MTM1 or CPR. The matching scene groups stay empty otherwise, so
   // the toggles are greyed out instead of looking broken.
   setChassisPartTogglesEnabled(enabled, { lights = enabled } = {}) {
     const states = [
@@ -444,7 +463,15 @@ function buildLoadedMessage(staged, sourceLabel) {
 }
 
 function formatTruckCount(count) {
-  return `${count} ${count === 1 ? "truck" : "trucks"}`;
+  return `${count} ${count === 1 ? "vehicle" : "vehicles"}`;
+}
+
+function buildDocumentTitle(manifest) {
+  const vehicleName = String(manifest?.truckName ?? "").trim();
+  const format = String(manifest?.formatVersion ?? "").trim();
+  return vehicleName
+    ? `JSTruckViewer - ${vehicleName}${format ? ` (${format})` : ""}`
+    : "JSTruckViewer";
 }
 
 function formatPodCount(count) {
@@ -452,6 +479,7 @@ function formatPodCount(count) {
 }
 
 const FORMAT_LABELS = {
+  CPR: "CART Precision Racing",
   EVO1: "4x4 Evolution (TRK v6)",
   EVO2: "4x4 Evolution 2 (TRK v7)"
 };

@@ -3,6 +3,7 @@ import { extractPodEntry, findArtEntry, findAllTruckManifests, findEntryByNormal
 import { parseTruckManifestText } from "./trk-parser.js";
 import { decodeBinModel } from "./bin-decoder.js";
 import { decodeSmfModel, isSmfModel } from "./evo/smf-parser.js";
+import { decodeCprCmdModel } from "./cpr/cmd-parser.js";
 import { decodeEvoTexture } from "./evo/evo-texture.js";
 import { decodeRawTexture } from "./texture-decoder.js";
 import { decodeTrueColorTexture } from "./image-decoder.js";
@@ -51,7 +52,7 @@ self.addEventListener("message", async (event) => {
 async function extractPrimaryTruckManifest(sessionId, opfsPodPath, podIndex, extractionScope = "") {
   const entry = findFirstTruckManifest(podIndex);
   if (!entry) {
-    throw new Error("No TRUCK/*.TRK manifest was found in the POD.");
+    throw new Error("No TRUCK/*.TRK or VEHICLE/*.CAR manifest was found in the POD.");
   }
   const outputPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
   await extractPodEntry(opfsPodPath, entry, outputPath);
@@ -61,7 +62,7 @@ async function extractPrimaryTruckManifest(sessionId, opfsPodPath, podIndex, ext
 async function extractTruckManifestByName(sessionId, opfsPodPath, podIndex, normalizedName, extractionScope = "") {
   const entry = podIndex.entries.find((e) => e.normalizedName === normalizedName);
   if (!entry) {
-    throw new Error(`TRK entry not found in POD: ${normalizedName}`);
+    throw new Error(`Vehicle manifest not found in POD: ${normalizedName}`);
   }
   const outputPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
   await extractPodEntry(opfsPodPath, entry, outputPath);
@@ -85,17 +86,25 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
   // the light markers kept.
   const isMtm1 = manifest.formatVersion === "MTM1";
   const isEvo = manifest.formatVersion === "EVO1" || manifest.formatVersion === "EVO2";
-  const hasChassisHardware = !isMtm1 && !isEvo;
+  const isCpr = manifest.formatVersion === "CPR";
+  const hasChassisHardware = !isMtm1 && !isEvo && !isCpr;
   const modelExtension = manifest.modelExtension ?? ".BIN";
 
-  const bodyEntry = resolveSingleModelEntry(podIndex, manifest.truckModelBaseName, "body", warnings, modelExtension);
+  const bodyExtension = isCpr ? modelExtensionFromName(manifest.truckModelBaseName, ".BIN") : modelExtension;
+  const bodyEntry = resolveSingleModelEntry(podIndex, manifest.truckModelBaseName, "body", warnings, bodyExtension);
   const axleEntry = hasChassisHardware ? resolveSingleModelEntry(podIndex, manifest.axleModelName, "axle", warnings, modelExtension) : null;
-  const wheelPlan = isMtm1
+  const wheelPlan = isCpr
+    ? resolveCprWheelEntries(podIndex, manifest.wheelModelNames, warnings)
+    : isMtm1
     ? resolveMtm1WheelEntries(podIndex, manifest.tireModelBaseName, warnings)
     : resolveWheelEntries(podIndex, manifest.tireModelBaseName, warnings, modelExtension);
 
   const body = await decodeExtractedModel(bodyEntry, "body", sessionId, opfsPodPath, extractionScope, extractedFiles);
   const axle = await decodeExtractedModel(axleEntry, "axle", sessionId, opfsPodPath, extractionScope, extractedFiles);
+  const helmetEntry = isCpr
+    ? resolveSingleModelEntry(podIndex, manifest.helmetModelName, "helmet", warnings, ".BIN")
+    : null;
+  const helmet = await decodeExtractedModel(helmetEntry, "helmet", sessionId, opfsPodPath, extractionScope, extractedFiles);
 
   const wheels = [];
   for (const wheelKey of WHEEL_KEYS) {
@@ -108,7 +117,7 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     });
   }
 
-  const models = [body, axle, ...wheels.map((wheel) => wheel.model)].filter(Boolean);
+  const models = [body, axle, helmet, ...wheels.map((wheel) => wheel.model)].filter(Boolean);
   const textureNames = new Set();
   for (const model of models) {
     for (const name of model.textureNames ?? []) {
@@ -197,26 +206,27 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
   return finishAssembly({
     body,
     wheels,
+    attachments: helmet ? [{ key: "helmet", model: helmet, position: manifest.helmetPosition ?? { x: 0, y: 0, z: 0 } }] : [],
     textures,
     manifest,
     warnings,
     extractedFiles,
     models,
-    axles: isMtm1 ? [] : axlePairs.map((pair) => buildAxlePlacement(axle, pair)),
-    axleBars: isMtm1 || suppressesAxleBars(manifest.axlebarOffset) ? [] : buildAxleBarDescriptors(
+    axles: isMtm1 || isCpr ? [] : axlePairs.map((pair) => buildAxlePlacement(axle, pair)),
+    axleBars: isMtm1 || isCpr || suppressesAxleBars(manifest.axlebarOffset) ? [] : buildAxleBarDescriptors(
       frontAxleCenter,
       rearAxleCenter,
       manifest.axlebarOffset,
       manifest.superiorAxlebarOffset
     ),
-    shocks: isMtm1 ? [] : buildShockDescriptors(frontAxleCenter, rearAxleCenter),
-    driveshaft: isMtm1 || suppressesDriveshaft(manifest.driveshaftPos)
+    shocks: isMtm1 || isCpr ? [] : buildShockDescriptors(frontAxleCenter, rearAxleCenter),
+    driveshaft: isMtm1 || isCpr || suppressesDriveshaft(manifest.driveshaftPos)
       ? null
       : buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos),
-    barTextureName: isMtm1 ? "" : (manifest.barTextureName ?? ""),
-    shockTextureName: isMtm1 ? "" : (manifest.shockTextureName ?? ""),
-    lights: isMtm1 ? [] : describeLights(manifest),
-    lightTextures: isMtm1 ? [] : await loadLightTextures(manifest, paletteContext, warnings)
+    barTextureName: isMtm1 || isCpr ? "" : (manifest.barTextureName ?? ""),
+    shockTextureName: isMtm1 || isCpr ? "" : (manifest.shockTextureName ?? ""),
+    lights: isMtm1 || isCpr ? [] : describeLights(manifest),
+    lightTextures: isMtm1 || isCpr ? [] : await loadLightTextures(manifest, paletteContext, warnings)
   });
 }
 
@@ -271,13 +281,14 @@ async function loadLightTextures(manifest, paletteContext, warnings) {
 // assembly's list and hand the scene one shape.
 function finishAssembly({
   body, wheels, textures, manifest, warnings, extractedFiles, models,
-  axles, axleBars, shocks, driveshaft, barTextureName, shockTextureName, lights, lightTextures = []
+  axles, axleBars, shocks, driveshaft, barTextureName, shockTextureName, lights, lightTextures = [], attachments = []
 }) {
   for (const model of models) {
     warnings.push(...(model.warnings ?? []).map((warning) => `${model.name}: ${warning}`));
   }
   return {
     body,
+    attachments,
     axles,
     axleBars,
     shocks,
@@ -671,6 +682,15 @@ function resolveMtm1WheelEntries(podIndex, tireModelName, warnings) {
   return { mapping, candidates: [entry] };
 }
 
+function resolveCprWheelEntries(podIndex, wheelModelNames = {}, warnings) {
+  const mapping = {};
+  for (const wheelKey of WHEEL_KEYS) {
+    const requestedName = wheelModelNames[wheelKey];
+    mapping[wheelKey] = resolveSingleModelEntry(podIndex, requestedName, `wheel ${wheelKey}`, warnings, ".BIN");
+  }
+  return { mapping, candidates: Object.values(mapping).filter(Boolean) };
+}
+
 function resolveWheelEntries(podIndex, prefix, warnings, extension = ".BIN") {
   const mapping = {};
   if (!prefix) {
@@ -852,11 +872,19 @@ async function decodeExtractedModel(entry, label, sessionId, opfsPodPath, extrac
   await extractPodEntry(opfsPodPath, entry, outputPath);
   extractedFiles.push(outputPath);
   const bytes = new Uint8Array(await (await readFile(outputPath)).arrayBuffer());
-  // Both formats are chosen by content rather than by the manifest's declared extension, so
-  // an archive that mixes the two still loads.
-  const model = isSmfModel(bytes) ? decodeSmfModel(bytes, entry.title) : decodeBinModel(bytes, entry.title);
+  // SMF and BIN are chosen by content; CPR's textual CMD is identified by its extension.
+  const model = entry.title.endsWith(".CMD")
+    ? decodeCprCmdModel(new TextDecoder("windows-1252").decode(bytes), entry.title)
+    : isSmfModel(bytes)
+      ? decodeSmfModel(bytes, entry.title)
+      : decodeBinModel(bytes, entry.title);
   model.partKey = label;
   return model;
+}
+
+function modelExtensionFromName(name, fallback) {
+  const match = String(name ?? "").match(/(\.[^.\\/]+)$/);
+  return match ? match[1].toUpperCase() : fallback;
 }
 
 function extractedPath(sessionId, extractionScope, normalizedName) {

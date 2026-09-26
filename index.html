@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MTM2 and 4x4 Evolution Truck Viewer</title>
-  <meta name="description" content="JSTruckViewer is a browser-based Monster Truck Madness and 4x4 Evo truck viewer that loads POD and ZIP archives from disk or URL, decodes BIN and SMF models and their textures client-side, and renders the truck in Three.js.">
-  <meta name="keywords" content="Monster Truck Madness 2, MTM2, 4x4 Evolution, 4x4 Evo 2, truck viewer, POD viewer, POD2, BIN viewer, SMF viewer, Three.js, BINedit, MTM, Terminal Reality">
+  <title>JSTruckViewer</title>
+  <meta name="description" content="JSTruckViewer is a browser-based Monster Truck Madness, CART Precision Racing and 4x4 Evo vehicle viewer that loads POD and ZIP archives from disk or URL, decodes BIN, CMD and SMF models and their textures client-side, and renders the vehicle in Three.js.">
+  <meta name="keywords" content="Monster Truck Madness 2, MTM2, CART Precision Racing, CPR, 4x4 Evolution, truck viewer, POD viewer, POD2, BIN viewer, CMD viewer, SMF viewer, Three.js, BINedit, MTM, Terminal Reality">
   <meta name="author" content="Juan Pablo Utreras">
   <link rel="stylesheet" href="./styles.css">
   <script type="importmap">
@@ -21,7 +21,7 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <h1><a href="https://github.com/juanputrerasm/JSTruckViewer">JSTruckViewer <span class="app-version">v1.5.6</span></a></h1>
+        <h1><a href="https://github.com/juanputrerasm/JSTruckViewer">JSTruckViewer <span class="app-version">v1.5.7</span></a></h1>
         <p>Online TRI truck viewer</p>
       </div>
       <div class="load-controls">
@@ -42,7 +42,7 @@
     <main id="main-layout" class="main-layout">
       <aside class="sidebar">
         <section id="truck-picker-panel" class="panel" hidden>
-          <h2>Trucks in archive</h2>
+          <h2>Vehicles in archive</h2>
           <select id="truck-select" class="truck-select"></select>
         </section>
 
@@ -72,10 +72,17 @@
             <label><input id="toggle-driveshaft" type="checkbox" checked> Driveshaft</label>
             <label><input id="toggle-scrape" type="checkbox"> Scrape points</label>
           </div>
+          <label id="cpr-wing-package-control" class="viewer-select-row" hidden>
+            <span>Wing package</span>
+            <select id="cpr-wing-package">
+              <option value="road-course" selected>Road / street course</option>
+              <option value="speedway">Speedway / oval</option>
+            </select>
+          </label>
         </section>
 
         <section class="panel">
-          <h2>Truck lights</h2>
+          <h2>Vehicle lights</h2>
           <div class="toolbar-grid">
             <label><input id="toggle-lights" type="checkbox"> Show lights</label>
             <label><input id="toggle-light-beams" type="checkbox" checked> Beams</label>

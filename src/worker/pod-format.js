@@ -171,11 +171,15 @@ export async function extractPodEntry(opfsPodPath, entry, outputPath) {
 }
 
 export function findFirstTruckManifest(podIndex) {
-  return podIndex.entries.find((entry) => entry.normalizedName.startsWith("TRUCK/") && entry.normalizedName.endsWith(".TRK")) ?? null;
+  return findAllTruckManifests(podIndex)[0] ?? null;
 }
 
 export function findAllTruckManifests(podIndex) {
-  return podIndex.entries.filter((entry) => entry.normalizedName.startsWith("TRUCK/") && entry.normalizedName.endsWith(".TRK"));
+  return podIndex.entries.filter((entry) => (
+    entry.normalizedName.startsWith("TRUCK/") && entry.normalizedName.endsWith(".TRK")
+  ) || (
+    entry.normalizedName.startsWith("VEHICLE/") && entry.normalizedName.endsWith(".CAR")
+  ));
 }
 
 export function findEntryByNormalizedName(podIndex, normalizedName) {

@@ -68,6 +68,7 @@ export class ViewerScene {
     this.groundGrid = null;
     this.partGroups = new Map();
     this.currentAssembly = null;
+    this.cprWingPackage = "road-course";
     this.gravityEnabled = false;
     this.texturesEnabled = true;
     this.wireframeEnabled = false;
@@ -127,6 +128,9 @@ export class ViewerScene {
       const placement = transformTruckVector(position);
       group.position.set(placement.x, placement.y, placement.z);
       for (const meshData of model.meshes ?? []) {
+        if (meshData.wingPackage && meshData.wingPackage !== this.cprWingPackage) {
+          continue;
+        }
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.positions), 3));
         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.normals), 3));
@@ -165,6 +169,7 @@ export class ViewerScene {
           normalMap
         });
         const surfaceMesh = new THREE.Mesh(geometry, material);
+        surfaceMesh.name = meshData.name ?? "";
         group.add(surfaceMesh);
         /*
           An Evo "glass" group is not all glass. The transparent flag is set per group, and the
@@ -219,6 +224,9 @@ export class ViewerScene {
     };
 
     addPart("body", assembly.body, offsetTruckVector({ x: 0, y: 0, z: 0 }, bodyOffset));
+    for (const attachment of assembly.attachments ?? []) {
+      addPart(attachment.key, attachment.model, offsetTruckVector(attachment.position, bodyOffset));
+    }
     for (const axle of assembly.axles ?? []) {
       addPart(axle.key, axle.model, offsetTruckVector(axle.position, axleOffset));
     }
@@ -389,6 +397,15 @@ export class ViewerScene {
 
   setGravityEnabled(enabled, options = {}) {
     this.gravityEnabled = enabled;
+    if (this.currentAssembly && options.rerender !== false) {
+      this.renderAssembly(false);
+    }
+  }
+
+  setCprWingPackage(wingPackage, options = {}) {
+    const next = wingPackage === "speedway" ? "speedway" : "road-course";
+    if (this.cprWingPackage === next) return;
+    this.cprWingPackage = next;
     if (this.currentAssembly && options.rerender !== false) {
       this.renderAssembly(false);
     }

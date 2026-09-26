@@ -234,7 +234,7 @@ function findStagedTruckEntry(staged, trkKeyOrNormalizedName) {
   const selected = staged.trkEntries?.find((entry) => entry.trkKey === trkKeyOrNormalizedName)
     ?? staged.trkEntries?.find((entry) => entry.normalizedName === trkKeyOrNormalizedName);
   if (!selected) {
-    throw new Error(`TRK entry not found in staged archive: ${trkKeyOrNormalizedName}`);
+    throw new Error(`Vehicle manifest not found in staged archive: ${trkKeyOrNormalizedName}`);
   }
   const pod = findStagedPod(staged, selected.podId);
   return {

@@ -6,9 +6,9 @@
 [![GitHub Pages](https://img.shields.io/badge/demo-GitHub%20Pages-222?logo=github)](https://juanputrerasm.github.io/JSTruckViewer/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-**A browser-based 3D truck viewer for Monster Truck Madness 1 & 2 and 4x4 Evolution 1 & 2.**
+**A browser-based 3D vehicle viewer for Monster Truck Madness 1 & 2, CART Precision Racing, and 4x4 Evolution 1 & 2.**
 
-JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manifests, decodes the referenced models and textures, and assembles a complete truck in Three.js. Classic MTM1 trucks, modern MTM2 trucks and both generations of 4x4 Evolution all load from the same archive. All archive processing happens locally in the browser.
+JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK or CAR manifests, decodes the referenced models and textures, and assembles a complete vehicle in Three.js. Classic MTM1 trucks, modern MTM2 trucks, CART Precision Racing cars and both generations of 4x4 Evolution all load through the same interface. All archive processing happens locally in the browser.
 
 **Live application:** [Open JSTruckViewer on GitHub Pages](https://juanputrerasm.github.io/JSTruckViewer/)
 
@@ -19,14 +19,16 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 ## Features
 
 - **POD and ZIP loading**: open a local archive, paste a URL, or autoload one through a query parameter.
-- **Multi-truck archives**: discover every `TRUCK/*.TRK` manifest and switch trucks without reopening the archive.
+- **Multi-vehicle archives**: discover every `TRUCK/*.TRK` and `VEHICLE/*.CAR` manifest and switch vehicles without reopening the archive.
 - **Multi-POD ZIP packs**: stage and search all POD members contained in a ZIP.
 - **Complete truck assembly**: render the body, four wheels, axles, axle bars, shocks, driveshaft, lights, and scrape points.
 - **Truck lights**: flare sprites and beam cones for headlights, roof light bars, brake, reverse, and special lights, with spinning beacons and blinkers animated and each type toggleable.
 - **MTM1 and MTM2 trucks**: classic MTM1 manifests are detected automatically and assembled as body plus four tires.
+- **CART Precision Racing cars**: CAR manifests, high-detail CMD bodies, four individually named wheels, helmets, the BIN-based pace car, and selectable road-course or speedway wing packages.
 - **4x4 Evo 1 & 2 trucks**: POD2 archives, TRK v6 and v7 manifests, SMF models, and Evo's paletted and TIFF textures with their real opacity channels.
 - **Interactive inspection**: orbit, pan, zoom, reset the camera, change lighting and background, toggle parts, textures, smoothing, wireframe, and gravity.
 - **Screenshot export**: save the current viewport as a JPEG.
+- **Contextual browser titles**: the tab identifies the active vehicle and format while keeping `JSTruckViewer` as the application title.
 - **Client-side operation**: archives and extracted assets remain in temporary browser storage.
 
 ## Supported content
@@ -39,7 +41,9 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 | TRK (MTM2, MTM2.1) | Truck manifest, component references, anchors, lights, and scrape points |
 | TRK (MTM1) | Classic manifest: body, one tire model, anchors, and scrape points |
 | TRK (v6, v7) | 4x4 Evolution 1 and 2 manifest: showroom data, vec3 anchors, counted lists, and paint schemes |
+| CAR (CPR) | CART Precision Racing vehicle manifest: CMD/BIN body, four wheel models, helmet, anchors, and scrape points |
 | BIN | Classic and updated MTM2 model records, and the MTM1 records that share them |
+| CMD | CART Precision Racing high-detail multipart vehicle geometry |
 | SMF | 4x4 Evo "C3DModel" geometry, with per-group materials and bump-map references |
 | RAW + ACT | Legacy paletted textures, including the shared MTM1 METALCR2 palette |
 | RAW + ACT + OPA | 4x4 Evolution paletted textures with their 8-bit opacity plane |
@@ -55,6 +59,14 @@ A manifest whose first line is the bare `truckName` label, rather than an `MTM2`
 Palette resolution follows what the games actually do. A `RAW` texture uses its same-name `.ACT` when the archive provides one, otherwise `METALCR2.ACT` is used. MTM2 archives supply a same-name palette for practically every texture, so they resolve at the first step and are unaffected.
 
 See [MTM1 truck format](docs/MTM1_TRK_FORMAT.md) for the field-by-field comparison.
+
+## CART Precision Racing vehicles support
+
+CPR archives store vehicle manifests under `VEHICLE/*.CAR`. Race cars reference a high-detail, text-based `.CMD` body, four explicitly named BIN wheels and a separate BIN helmet. The stock pace car references a BIN body instead. CMD parts retain their names and authored vertex normals, and `lowDetailCenterZ` aligns the detailed body with its referenced low-detail BIN.
+
+The viewer renders the high-detail CMD body and preserves each named component as a separate mesh. CMD includes road/street-course and speedway/oval wing packages; a CPR-only selector switches between them without drawing both alternatives at once. The road-course package is the default. CPR's damage-state behavior is not simulated.
+
+See [CPR CAR and CMD formats](docs/CPR_CAR_CMD_FORMAT.md) for the decoded layouts and coordinate conversions.
 
 ## 4x4 Evolution trucks support
 
@@ -133,7 +145,7 @@ Relative paths are resolved against the viewer page. If both parameters are pres
 | Component | Role |
 |---|---|
 | ES modules | Application controller, archive staging, and scene management |
-| Module Web Worker | POD indexing, TRK parsing, BIN decoding, and truck assembly |
+| Module Web Worker | POD indexing, TRK/CAR parsing, BIN/CMD/SMF decoding, and vehicle assembly |
 | OPFS | Isolated temporary archive and extracted-asset storage |
 | Three.js r169 | Rendering, lighting, camera controls, and screenshot capture |
 | fflate 0.8.2 | ZIP extraction |
@@ -145,12 +157,13 @@ src/
 ├── viewer-scene.js         Three.js scene and truck rendering
 ├── worker-client.js        Promise wrapper for the module worker
 ├── shared/                 OPFS and texture helpers
-└── worker/                 POD, TRK, BIN, texture, and image decoders
+└── worker/                 POD, manifest, model, texture, and image decoders
 ```
 
 ## Known limitations
 
 - The viewer does not simulate MTM2 vehicle physics or animation.
+- CART Precision Racing damage states and non-zero CMD part rotations are not simulated.
 - Some TRK directives are parsed for diagnostics but do not affect rendering.
 - Missing or ambiguous wheel assets require naming heuristics and may produce warnings.
 - Browser image decoding availability depends on the browser's worker APIs.
@@ -167,6 +180,7 @@ src/
 - [BIN HD / Extended BIN](docs/BIN_HD_FORMAT.md)
 - [MTM2.1 / TRK 2.1](docs/TRK_2_1_FORMAT.md)
 - [MTM1 truck format](docs/MTM1_TRK_FORMAT.md)
+- [CPR CAR and CMD formats](docs/CPR_CAR_CMD_FORMAT.md)
 
 ## Credits and license
 
