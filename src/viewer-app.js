@@ -47,7 +47,14 @@ export class TruckViewerApp {
     this.toggleShocks.addEventListener("change", () => this.scene.setShocksVisible(this.toggleShocks.checked));
     this.toggleDriveshaft.addEventListener("change", () => this.scene.setDriveshaftVisible(this.toggleDriveshaft.checked));
     this.toggleScrape.addEventListener("change", () => this.scene.setScrapePointsVisible(this.toggleScrape.checked));
-    this.toggleLights.addEventListener("change", () => this.scene.setLightsVisible(this.toggleLights.checked));
+    this.toggleLights.addEventListener("change", () => {
+      this.scene.setLightsVisible(this.toggleLights.checked);
+      this.updateLightTogglesEnabled();
+    });
+    this.toggleLightBeams.addEventListener("change", () => this.scene.setLightBeamsVisible(this.toggleLightBeams.checked));
+    for (const [groupKey, toggle] of this.lightGroupToggles) {
+      toggle.addEventListener("change", () => this.scene.setLightGroupVisible(groupKey, toggle.checked));
+    }
     this.renderIdleState();
     void this.autoloadFromPageQuery();
   }
@@ -76,6 +83,14 @@ export class TruckViewerApp {
     this.toggleDriveshaft = $("toggle-driveshaft");
     this.toggleScrape = $("toggle-scrape");
     this.toggleLights = $("toggle-lights");
+    this.toggleLightBeams = $("toggle-light-beams");
+    this.lightGroupToggles = new Map([
+      ["headlights", $("toggle-light-headlights")],
+      ["lightBar", $("toggle-light-light-bar")],
+      ["brake", $("toggle-light-brake")],
+      ["reverse", $("toggle-light-reverse")],
+      ["special", $("toggle-light-special")]
+    ]);
     this.statusText = $("status-text");
     this.viewport = $("viewport");
     this.mainLayout = $("main-layout");
@@ -320,6 +335,7 @@ export class TruckViewerApp {
       toggle.disabled = !available;
       toggle.closest("label")?.classList.toggle("control-unavailable", !available);
     }
+    this.updateLightTogglesEnabled();
   }
 
   setStatus(message) {
@@ -370,6 +386,27 @@ export class TruckViewerApp {
     this.scene.setDriveshaftVisible(this.toggleDriveshaft.checked);
     this.scene.setScrapePointsVisible(this.toggleScrape.checked);
     this.scene.setLightsVisible(this.toggleLights.checked);
+    this.scene.setLightBeamsVisible(this.toggleLightBeams.checked);
+    for (const [groupKey, toggle] of this.lightGroupToggles) {
+      this.scene.setLightGroupVisible(groupKey, toggle.checked);
+    }
+    this.updateLightTogglesEnabled();
+  }
+
+  // The per-type toggles only mean something while lights are shown, and only for the types
+  // this truck has: most stock trucks have no light bar and only two have beacons.
+  updateLightTogglesEnabled() {
+    const present = this.scene.presentLightGroups();
+    const shown = this.toggleLights.checked && !this.toggleLights.disabled;
+    const hasBeams = this.scene.hasLightBeams();
+    const states = [
+      [this.toggleLightBeams, shown && hasBeams],
+      ...[...this.lightGroupToggles].map(([groupKey, toggle]) => [toggle, shown && present.has(groupKey)])
+    ];
+    for (const [toggle, available] of states) {
+      toggle.disabled = !available;
+      toggle.closest("label")?.classList.toggle("control-unavailable", !available);
+    }
   }
 }
 

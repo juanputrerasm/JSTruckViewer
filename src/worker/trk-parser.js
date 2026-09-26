@@ -130,7 +130,9 @@ export function parseTruckManifestText(text) {
       while (manifest.lights.length <= idx) manifest.lights.push(null);
       if (!manifest.lights[idx]) manifest.lights[idx] = { index: idx };
       const light = manifest.lights[idx];
-      if (prop.startsWith("body axis pos")) {
+      if (prop === "type") {
+        light.type = parseInt(value, 10) || 0;
+      } else if (prop.startsWith("body axis pos")) {
         const parts = value.split(",").map((v) => parseFloat(v) || 0);
         light.pos = { x: parts[0] ?? 0, y: parts[1] ?? 0, z: parts[2] ?? 0 };
         light.bitmapRadius = parts[3] ?? 0.25;

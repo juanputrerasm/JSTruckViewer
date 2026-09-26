@@ -22,6 +22,7 @@ JSTruckViewer opens POD and ZIP archives from disk or URL, reads their TRK manif
 - **Multi-truck archives**: discover every `TRUCK/*.TRK` manifest and switch trucks without reopening the archive.
 - **Multi-POD ZIP packs**: stage and search all POD members contained in a ZIP.
 - **Complete truck assembly**: render the body, four wheels, axles, axle bars, shocks, driveshaft, lights, and scrape points.
+- **Truck lights**: flare sprites and beam cones for headlights, roof light bars, brake, reverse, and special lights, with spinning beacons and blinkers animated and each type toggleable.
 - **MTM1 and MTM2 trucks**: classic MTM1 manifests are detected automatically and assembled as body plus four tires.
 - **4x4 Evo 1 & 2 trucks**: POD2 archives, TRK v6 and v7 manifests, SMF models, and Evo's paletted and TIFF textures with their real opacity channels.
 - **Interactive inspection**: orbit, pan, zoom, reset the camera, change lighting and background, toggle parts, textures, smoothing, wireframe, and gravity.

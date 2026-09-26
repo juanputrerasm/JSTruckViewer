@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TruckLightRig } from "./truck-lights.js";
 
 const MRGLMAT_BLEND = 0x0004;
 const MRGLMAT_ALPHATEST = 0x0008;
@@ -51,7 +52,8 @@ export class ViewerScene {
     this.scrapeGroup = new THREE.Group();
     this.scene.add(this.scrapeGroup);
 
-    this.lightsGroup = new THREE.Group();
+    this.lightRig = new TruckLightRig();
+    this.lightsGroup = this.lightRig.group;
     this.scene.add(this.lightsGroup);
 
     this.axleBarsGroup = new THREE.Group();
@@ -79,7 +81,7 @@ export class ViewerScene {
   clear() {
     this.rootGroup.clear();
     this.scrapeGroup.clear();
-    this.lightsGroup.clear();
+    this.lightRig.clear();
     this.axleBarsGroup.clear();
     this.shocksGroup.clear();
     this.driveshaftGroup.clear();
@@ -104,8 +106,10 @@ export class ViewerScene {
     const textureMap = new Map();
     for (const texture of assembly.textures ?? []) {
       textureMap.set(normalizeTextureKey(texture.name), {
+        source: texture,
         opaque: createDataTexture(texture, "opaque", this.smoothTexturesEnabled),
         cutout: createDataTexture(texture, "cutout", this.smoothTexturesEnabled),
+        legacyBlend: null,
         normal: texture.normal ? createDataTexture(texture.normal, "normal", this.smoothTexturesEnabled) : null
       });
     }
@@ -127,11 +131,17 @@ export class ViewerScene {
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.positions), 3));
         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(transformVertexBuffer(meshData.normals), 3));
         const textureEntry = textureMap.get(normalizeTextureKey(meshData.textureName)) ?? null;
+        const legacyFilterBlend = !!meshData.legacyFilterBlend;
         const needsAlpha = !!meshData.transparent || !!(meshData.material?.flags & (MRGLMAT_BLEND | MRGLMAT_ALPHATEST | MRGLMAT_TEXSOLID));
-        const diffuseMap = textureEntry ? (needsAlpha ? textureEntry.cutout : textureEntry.opaque) : null;
+        if (legacyFilterBlend && textureEntry && !textureEntry.legacyBlend) {
+          textureEntry.legacyBlend = createDataTexture(textureEntry.source, "cutout", false, true);
+        }
+        const diffuseMap = textureEntry
+          ? (legacyFilterBlend ? textureEntry.legacyBlend : (needsAlpha ? textureEntry.cutout : textureEntry.opaque))
+          : null;
         const normalMap = textureEntry?.normal ?? null;
         if (meshData.uvs?.length) {
-          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(buildDisplayUvs(meshData.uvs, diffuseMap), 2));
+          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(buildDisplayUvs(meshData.uvs, diffuseMap, legacyFilterBlend), 2));
         }
         /*
           Legacy BIN truck/body meshes are wound opposite to what Three.js expects.
@@ -143,7 +153,7 @@ export class ViewerScene {
           those blend instead - alpha-testing them at 0.5 would turn a soft lens into a
           stencil, and there are few enough of them for sorting to stay well behaved.
         */
-        const blended = !!meshData.blend;
+        const blended = !!meshData.blend || legacyFilterBlend;
         const material = this.createSurfaceMaterial({
           color: diffuseMap ? 0xffffff : (meshData.color ?? 0x9b9b9b),
           map: diffuseMap,
@@ -171,7 +181,7 @@ export class ViewerScene {
           translucent texels; over the solid ones it repaints the same colour at the same depth.
           The same idea as the TEXSOLID pass below, for Evo's opacity plane.
         */
-        if (blended && !meshData.material && textureEntry) {
+        if (meshData.blend && !meshData.material && textureEntry) {
           const opaqueTexels = this.createSurfaceMaterial({
             color: 0xffffff,
             map: textureEntry.cutout,
@@ -239,16 +249,12 @@ export class ViewerScene {
       this.scrapeGroup.add(marker);
     }
 
-    for (const light of assembly.lights ?? []) {
-      const radius = Math.min(light.radius ?? 0.15, 0.25);
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(radius, 10, 10),
-        new THREE.MeshBasicMaterial({ color: 0xffffaa })
-      );
-      const placement = transformTruckVector(offsetTruckVector(light.pos, bodyOffset));
-      marker.position.set(placement.x, placement.y, placement.z);
-      this.lightsGroup.add(marker);
-    }
+    this.lightRig.smoothTextures = this.smoothTexturesEnabled;
+    this.lightRig.build(
+      assembly.lights,
+      assembly.lightTextures,
+      (position) => transformTruckVector(offsetTruckVector(position, bodyOffset))
+    );
 
     if (fitCamera) {
       this.fitToContent();
@@ -272,6 +278,7 @@ export class ViewerScene {
 
   setTextureSmoothingEnabled(enabled) {
     this.smoothTexturesEnabled = enabled;
+    this.lightRig.setTextureSmoothing(enabled);
     this.traverseRenderableParts((node) => {
       if (node.isMesh && node.material?.map) {
         applyTextureFiltering(node.material.map, enabled);
@@ -395,6 +402,22 @@ export class ViewerScene {
     this.lightsGroup.visible = visible;
   }
 
+  setLightGroupVisible(groupKey, visible) {
+    this.lightRig.setGroupVisible(groupKey, visible);
+  }
+
+  setLightBeamsVisible(visible) {
+    this.lightRig.setBeamsVisible(visible);
+  }
+
+  presentLightGroups() {
+    return this.lightRig.presentGroups();
+  }
+
+  hasLightBeams() {
+    return this.lightRig.lamps.some((lamp) => lamp.beam);
+  }
+
   resetCamera() {
     this.fitToContent();
   }
@@ -402,6 +425,9 @@ export class ViewerScene {
   // Captures the current Three.js frame as JPEG using the browser canvas API (no third-party library).
   async saveScreenshotJpeg() {
     this.controls.update();
+    if (this.lightsGroup.visible) {
+      this.lightRig.update(this.camera, performance.now());
+    }
     this.renderer.render(this.scene, this.camera);
 
     const sourceCanvas = this.renderer.domElement;
@@ -458,6 +484,9 @@ export class ViewerScene {
 
   renderFrame() {
     this.controls.update();
+    if (this.lightsGroup.visible) {
+      this.lightRig.update(this.camera, performance.now());
+    }
     this.renderer.render(this.scene, this.camera);
     requestAnimationFrame(this.renderFrame);
   }
@@ -579,7 +608,7 @@ function isExtraPass(mesh) {
   no alpha at all, so black is the colour key, while Evo textures already carry an authored
   opacity plane and are passed through untouched.
 */
-function createDataTexture(texture, mode = "opaque", smooth = false) {
+function createDataTexture(texture, mode = "opaque", smooth = false, forceLinear = false) {
   const data = new Uint8Array(texture.rgba);
   if (mode === "opaque" && (texture.sourceFormat === "RAW" || texture.sourceFormat === "EVO")) {
     for (let i = 3; i < data.length; i += 4) {
@@ -587,10 +616,9 @@ function createDataTexture(texture, mode = "opaque", smooth = false) {
     }
   } else if (mode === "cutout" && texture.sourceFormat === "RAW") {
     for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      data[i + 3] = r === 0 && g === 0 && b === 0 ? 0 : 255;
+      const pixel = i / 4;
+      const keyedAlpha = texture.colorKeyAlpha?.[pixel];
+      data[i + 3] = keyedAlpha ?? (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 ? 0 : 255);
     }
   }
   const dataTexture = new THREE.DataTexture(data, texture.width, texture.height, THREE.RGBAFormat);
@@ -598,15 +626,29 @@ function createDataTexture(texture, mode = "opaque", smooth = false) {
   dataTexture.flipY = true;
   dataTexture.wrapS = THREE.ClampToEdgeWrapping;
   dataTexture.wrapT = THREE.ClampToEdgeWrapping;
+  dataTexture.userData.forceLinear = forceLinear;
   applyTextureFiltering(dataTexture, smooth);
-  dataTexture.generateMipmaps = false;
-  dataTexture.needsUpdate = true;
   return dataTexture;
 }
 
+/*
+  Smooth filtering is bilinear up close and trilinear with mipmaps at a distance: a 256x256
+  body texture on a truck a few hundred pixels wide is minified, and without mipmaps linear
+  filtering still sparkles and crawls as the camera moves. Unsmoothed keeps the hard texels.
+*/
 function applyTextureFiltering(texture, smooth) {
+  if (texture.userData.forceLinear) {
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    texture.anisotropy = 1;
+    texture.needsUpdate = true;
+    return;
+  }
   texture.magFilter = smooth ? THREE.LinearFilter : THREE.NearestFilter;
-  texture.minFilter = smooth ? THREE.LinearFilter : THREE.NearestFilter;
+  texture.minFilter = smooth ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
+  texture.generateMipmaps = smooth;
+  texture.anisotropy = smooth ? 4 : 1;
   texture.needsUpdate = true;
 }
 
@@ -634,7 +676,7 @@ function buildCylinderBetween(start, end, radius, diffuseMap, color, lit = false
   return mesh;
 }
 
-function buildDisplayUvs(sourceUvs, texture) {
+function buildDisplayUvs(sourceUvs, texture, preserveSubTexelPosition = false) {
   const output = new Float32Array(sourceUvs.length);
   if (!texture?.image?.width || !texture?.image?.height) {
     for (let i = 0; i < sourceUvs.length; i += 1) {
@@ -645,8 +687,8 @@ function buildDisplayUvs(sourceUvs, texture) {
   const width = texture.image.width;
   const height = texture.image.height;
   for (let i = 0; i < sourceUvs.length; i += 2) {
-    output[i] = snapUvToTexel(sourceUvs[i], width);
-    output[i + 1] = snapUvToTexel(sourceUvs[i + 1], height);
+    output[i] = preserveSubTexelPosition ? clamp01(sourceUvs[i]) : snapUvToTexel(sourceUvs[i], width);
+    output[i + 1] = preserveSubTexelPosition ? clamp01(sourceUvs[i + 1]) : snapUvToTexel(sourceUvs[i + 1], height);
   }
   return output;
 }

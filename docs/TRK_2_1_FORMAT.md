@@ -43,11 +43,27 @@ The parser recognizes the following classic fields:
 | `Instrument Cluster` | String | Instrument-cluster name, displayed as metadata |
 | `Wave File` | One or more lines | Sound references, displayed as metadata |
 | `Number of Lights` | Integer | Declared light count |
-| `Light N body axis pos...` | `x,y,z,radius` | Light source position and bitmap radius |
-| `Light N heading...` | `heading,pitch,spin` | Light orientation/animation |
-| `Light N cone:...` | `length,baseRadius,rimRadius,texture` | Cone geometry and texture |
-| `Light N source:...` | String | Source bitmap |
-| `Light N ms on...` | `onMs,offMs` | Blink timing |
+| `Light N type` | Integer | Light role, see [Light types](#light-types) |
+| `Light N body axis pos...` | `x,y,z,radius` | Light source position and bitmap radius (ft) |
+| `Light N heading...` | `heading,pitch,spin` | Aim in radians and heading spin in rad/s |
+| `Light N cone:...` | `length,baseRadius,rimRadius,texture` | Beam cone in ft and its texture; length 0 means no beam |
+| `Light N source:...` | String | Flare bitmap drawn at the lamp |
+| `Light N ms on...` | `onMs,offMs` | Blink timing; `0,0` is steady |
+
+### Light types
+
+The types below are read from the 163 lights of the 20 stock trucks in `TRUCK2.POD`. The game's code was not consulted, so the roles are inferred from where each type sits and what it draws.
+
+| Type | Role | Stock usage |
+|---|---|---|
+| `0` | Headlight | Lights 0 and 1 of every truck, pitched -0.1745 (10 degrees down), 75 ft `HEADLITE.RAW`/`LITEFUZZ.RAW` beam |
+| `1` | Brake and tail | Rear corners toed out 15 degrees, per-make `BRLT*.RAW` flare; `BRLTTCAB.RAW` is the roof cab marker pitched 20 degrees up |
+| `2` | Unused | Not present in the stock trucks |
+| `3` | Roof light bar | Four `HEADLITE.RAW` lamps fanned across the roof, 40 ft beams |
+| `4` | Special | Monster Patrol's red and blue beacons spinning at 2 pi rad/s; Snakebite's side blinkers at 300/700 ms |
+| `5` | Reverse | Rear, `BRLTRV.RAW` |
+
+Heading 0 aims straight ahead (+z) and grows toward +x, so pi aims straight back. Flare bitmaps are glows on black, meant for additive blending. The beam textures `LITEFUZZ.RAW`, `REDFUZZ.RAW` and `BLUEFUZZ.RAW` are 256x256 speckle kept in `STARTUP.POD`, not beside the trucks; the viewer substitutes a generated speckle of the same hue when they are absent.
 
 ## Differences in MTM2.1
 

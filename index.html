@@ -21,7 +21,7 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <h1><a href="https://github.com/juanputrerasm/JSTruckViewer">JSTruckViewer <span class="app-version">v1.5.5</span></a></h1>
+        <h1><a href="https://github.com/juanputrerasm/JSTruckViewer">JSTruckViewer <span class="app-version">v1.5.6</span></a></h1>
         <p>Online TRI truck viewer</p>
       </div>
       <div class="load-controls">
@@ -61,7 +61,7 @@
               </select>
             </label>
             <label><input id="toggle-textures" type="checkbox" checked> Textures</label>
-            <label><input id="toggle-smooth-textures" type="checkbox" checked> Smooth textures</label>
+            <label><input id="toggle-smooth-textures" type="checkbox" autocomplete="off" checked> Smooth textures</label>
             <label><input id="toggle-wireframe" type="checkbox"> Wireframe</label>
             <label><input id="toggle-scene-lighting" type="checkbox"> Scene lighting</label>
             <label><input id="toggle-gravity" type="checkbox" checked> Gravity</label>
@@ -71,7 +71,19 @@
             <label><input id="toggle-shocks" type="checkbox" checked> Shocks</label>
             <label><input id="toggle-driveshaft" type="checkbox" checked> Driveshaft</label>
             <label><input id="toggle-scrape" type="checkbox"> Scrape points</label>
-            <label><input id="toggle-lights" type="checkbox"> Lights</label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Truck lights</h2>
+          <div class="toolbar-grid">
+            <label><input id="toggle-lights" type="checkbox"> Show lights</label>
+            <label><input id="toggle-light-beams" type="checkbox" checked> Beams</label>
+            <label><input id="toggle-light-headlights" type="checkbox" checked> Headlights</label>
+            <label><input id="toggle-light-light-bar" type="checkbox" checked> Light bar</label>
+            <label><input id="toggle-light-brake" type="checkbox" checked> Brake</label>
+            <label><input id="toggle-light-reverse" type="checkbox" checked> Reverse</label>
+            <label><input id="toggle-light-special" type="checkbox" checked> Beacons</label>
           </div>
         </section>
 

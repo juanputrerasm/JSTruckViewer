@@ -284,6 +284,10 @@ function buildMeshes(model) {
   const grouped = new Map();
   for (const polygon of model.polygons ?? []) {
     const flags = polygon.material?.flags ?? 0;
+    // Some MTM2 models fake tinted glass by mapping every corner of a transparent face to
+    // one texel junction. Direct3D 5 bilinearly mixed the black colour key with the nearby
+    // opaque texels, turning their relative coverage into fractional alpha.
+    const legacyFilterBlend = !polygon.material && polygon.transparent && hasCollapsedUvs(polygon);
     const materialTransparent = polygon.material
       ? !!(flags & (MRGLMAT_BLEND | MRGLMAT_ALPHATEST | MRGLMAT_TEXSOLID))
       : polygon.transparent;
@@ -292,6 +296,7 @@ function buildMeshes(model) {
       materialTransparent ? "cutout" : "opaque",
       polygon.solid ? `solid:${polygon.solidColor >>> 0}` : "textured",
       polygon.material ? `material:${polygon.material.id}` : "legacy",
+      legacyFilterBlend ? "filtered-blend" : "cutout",
       polygon.material2?.normalStrength ?? 1
     ].join("|");
     if (!grouped.has(key)) {
@@ -304,12 +309,14 @@ function buildMeshes(model) {
         solid: !!polygon.solid,
         solidColor: polygon.solidColor ?? 0,
         material: polygon.material ?? null,
-        material2: polygon.material2 ?? null
+        material2: polygon.material2 ?? null,
+        legacyFilterBlend
       });
     }
     const bucket = grouped.get(key);
     triangulatePolygon(model.vertices, polygon, bucket);
   }
+  smoothBucketNormals([...grouped.values()]);
   model.meshes = [...grouped.values()].map((bucket) => ({
     textureName: bucket.textureName,
     positions: new Float32Array(bucket.positions),
@@ -319,9 +326,18 @@ function buildMeshes(model) {
     transparent: bucket.transparent,
     solid: bucket.solid,
     material: bucket.material,
-    material2: bucket.material2
+    material2: bucket.material2,
+    legacyFilterBlend: bucket.legacyFilterBlend
   }));
   return model;
+}
+
+function hasCollapsedUvs(polygon) {
+  const firstU = polygon.textureU?.[0];
+  const firstV = polygon.textureV?.[0];
+  return firstU !== undefined && firstV !== undefined
+    && polygon.textureU.every((value) => value === firstU)
+    && polygon.textureV.every((value) => value === firstV);
 }
 
 function triangulatePolygon(vertices, polygon, bucket) {
@@ -345,6 +361,83 @@ function triangulatePolygon(vertices, polygon, bucket) {
       bucket.uvs.push((textureU[idx] ?? 0) / UV_SCALE, 1 - (textureV[idx] ?? 0) / UV_SCALE);
     }
   }
+}
+
+/*
+  BIN stores no vertex normals, only one per face, so lighting the triangles with their face
+  normals shades every polygon flat and the low-poly bodies come out faceted.
+
+  Each corner instead gets the area-weighted average of the faces that meet at its position,
+  across every bucket of the model so a texture seam does not show as a shading seam. Faces
+  bent further than the crease angle from the corner's own face are left out, which keeps the
+  hard edges a truck actually has - bumper corners, wheel-well lips, the cab against the bed.
+  The same test drops a two-sided face's back copy, whose normal points the other way.
+*/
+const SMOOTHING_CREASE_DEGREES = 60;
+
+function smoothBucketNormals(buckets) {
+  const cosCrease = Math.cos((SMOOTHING_CREASE_DEGREES * Math.PI) / 180);
+  const facesAtPosition = new Map();
+  const faceNormals = buckets.map((bucket) => {
+    const positions = bucket.positions;
+    const normals = [];
+    for (let i = 0; i + 8 < positions.length; i += 9) {
+      const normal = weightedFaceNormal(positions, i);
+      normals.push(normal);
+      for (let corner = 0; corner < 3; corner += 1) {
+        const key = positionKey(positions, i + corner * 3);
+        let faces = facesAtPosition.get(key);
+        if (!faces) facesAtPosition.set(key, (faces = []));
+        faces.push(normal);
+      }
+    }
+    return normals;
+  });
+
+  buckets.forEach((bucket, bucketIndex) => {
+    faceNormals[bucketIndex].forEach((own, face) => {
+      if (!own.length) return;
+      for (let corner = 0; corner < 3; corner += 1) {
+        const offset = face * 9 + corner * 3;
+        let x = 0;
+        let y = 0;
+        let z = 0;
+        for (const other of facesAtPosition.get(positionKey(bucket.positions, offset))) {
+          if (!other.length) continue;
+          const cos = (own.x * other.x + own.y * other.y + own.z * other.z) / (own.length * other.length);
+          if (cos >= cosCrease) {
+            x += other.x;
+            y += other.y;
+            z += other.z;
+          }
+        }
+        const length = Math.hypot(x, y, z);
+        if (length > 0) {
+          bucket.normals[offset] = x / length;
+          bucket.normals[offset + 1] = y / length;
+          bucket.normals[offset + 2] = z / length;
+        }
+      }
+    });
+  });
+}
+
+// The unnormalised cross product: its length is twice the triangle's area, which is the weight.
+function weightedFaceNormal(positions, i) {
+  const abx = positions[i + 3] - positions[i];
+  const aby = positions[i + 4] - positions[i + 1];
+  const abz = positions[i + 5] - positions[i + 2];
+  const acx = positions[i + 6] - positions[i];
+  const acy = positions[i + 7] - positions[i + 1];
+  const acz = positions[i + 8] - positions[i + 2];
+  const x = aby * acz - abz * acy;
+  const y = abz * acx - abx * acz;
+  const z = abx * acy - aby * acx;
+  return { x, y, z, length: Math.hypot(x, y, z) };
+}
+
+function positionKey(positions, i) {
+  return `${Math.round(positions[i] * 1000)},${Math.round(positions[i + 1] * 1000)},${Math.round(positions[i + 2] * 1000)}`;
 }
 
 function chooseTriangles(vertices, vertexIndices) {

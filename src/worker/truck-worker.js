@@ -141,7 +141,8 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       driveshaft: null,
       barTextureName: "",
       shockTextureName: "",
-      lights: describeLights(manifest)
+      lights: describeLights(manifest),
+      lightTextures: await loadLightTextures(manifest, paletteContext, warnings)
     });
   }
 
@@ -156,20 +157,7 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       continue;
     }
     try {
-      const sourcePath = extractedPath(sessionId, extractionScope, sourceEntry.normalizedName);
-      await extractPodEntry(opfsPodPath, sourceEntry, sourcePath);
-      extractedFiles.push(sourcePath);
-      const sourceBytes = new Uint8Array(await (await readFile(sourcePath)).arrayBuffer());
-      let decoded;
-      if (sourceEntry.title.endsWith(".RAW")) {
-        const actBytes = await resolvePaletteBytes(name, paletteContext);
-        decoded = decodeRawTexture(sourceBytes, actBytes, replaceExtension(name, ".RAW"));
-      } else {
-        decoded = await decodeTrueColorTexture(sourceBytes, sourceEntry.title, sourceEntry.title.endsWith(".TGA") ? "TGA" : "PNG");
-        decoded.name = name;
-        const warning = hdDimensionWarning(sourceEntry.title, decoded);
-        if (warning) warnings.push(warning);
-      }
+      const decoded = await decodeArtEntry(sourceEntry, name, paletteContext, warnings);
       const normalStem = `${textureStem(name)}_N`;
       const normalEntry = findArtEntry(podIndex, normalStem, ".PNG") ?? findArtEntry(podIndex, normalStem, ".TGA");
       if (normalEntry) {
@@ -227,15 +215,63 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
       : buildDriveshaftDescriptor(frontAxleCenter, rearAxleCenter, manifest.driveshaftPos),
     barTextureName: isMtm1 ? "" : (manifest.barTextureName ?? ""),
     shockTextureName: isMtm1 ? "" : (manifest.shockTextureName ?? ""),
-    lights: isMtm1 ? [] : describeLights(manifest)
+    lights: isMtm1 ? [] : describeLights(manifest),
+    lightTextures: isMtm1 ? [] : await loadLightTextures(manifest, paletteContext, warnings)
   });
+}
+
+// Reads one ART entry (a paletted .RAW, or an HD .PNG/.TGA) into RGBA.
+async function decodeArtEntry(sourceEntry, name, paletteContext, warnings) {
+  const { sessionId, opfsPodPath, extractionScope, extractedFiles } = paletteContext;
+  const sourcePath = extractedPath(sessionId, extractionScope, sourceEntry.normalizedName);
+  await extractPodEntry(opfsPodPath, sourceEntry, sourcePath);
+  extractedFiles.push(sourcePath);
+  const sourceBytes = new Uint8Array(await (await readFile(sourcePath)).arrayBuffer());
+  if (sourceEntry.title.endsWith(".RAW")) {
+    const actBytes = await resolvePaletteBytes(name, paletteContext);
+    return decodeRawTexture(sourceBytes, actBytes, replaceExtension(name, ".RAW"));
+  }
+  const decoded = await decodeTrueColorTexture(sourceBytes, sourceEntry.title, sourceEntry.title.endsWith(".TGA") ? "TGA" : "PNG");
+  decoded.name = name;
+  const warning = hdDimensionWarning(sourceEntry.title, decoded);
+  if (warning) warnings.push(warning);
+  return decoded;
+}
+
+/*
+  The bitmaps a light draws with: its source flare (HEADLITE.RAW, BRLTFORD.RAW, ...) and its
+  beam texture (LITEFUZZ.RAW, REDFUZZ.RAW, BLUEFUZZ.RAW).
+
+  The flares ship beside the trucks in TRUCK2.POD, but the stock game keeps the three fuzz
+  textures in STARTUP.POD, so a truck archive on its own normally lacks them. A missing one
+  is not worth a warning: the scene falls back to a generated noise of the same tint.
+*/
+async function loadLightTextures(manifest, paletteContext, warnings) {
+  const names = new Set();
+  for (const light of manifest.lights ?? []) {
+    if (light?.sourceBitmap) names.add(normalizeArchiveName(light.sourceBitmap));
+    if (light?.coneTexture && light.coneLength > 0) names.add(normalizeArchiveName(light.coneTexture));
+  }
+  const textures = [];
+  for (const name of names) {
+    const entry = findArtEntry(paletteContext.podIndex, name, ".PNG")
+      ?? findArtEntry(paletteContext.podIndex, name, ".TGA")
+      ?? findArtEntry(paletteContext.podIndex, name, ".RAW");
+    if (!entry) continue;
+    try {
+      textures.push(await decodeArtEntry(entry, name, paletteContext, warnings));
+    } catch (error) {
+      warnings.push(`Light bitmap ${name}: ${error.message}`);
+    }
+  }
+  return textures;
 }
 
 // Both assembly paths end the same way: fold each model's own parse warnings into the
 // assembly's list and hand the scene one shape.
 function finishAssembly({
   body, wheels, textures, manifest, warnings, extractedFiles, models,
-  axles, axleBars, shocks, driveshaft, barTextureName, shockTextureName, lights
+  axles, axleBars, shocks, driveshaft, barTextureName, shockTextureName, lights, lightTextures = []
 }) {
   for (const model of models) {
     warnings.push(...(model.warnings ?? []).map((warning) => `${model.name}: ${warning}`));
@@ -251,6 +287,7 @@ function finishAssembly({
     wheels,
     scrapePoints: manifest.scrapePoints ?? [],
     lights,
+    lightTextures,
     textures,
     warnings,
     extractedFiles: [...new Set(extractedFiles)]
@@ -283,10 +320,37 @@ function suppressesDriveshaft(position) {
   return !!position && !(position.x ?? 0) && !(position.y ?? 0) && !(position.z ?? 0);
 }
 
+/*
+  One record per light, in truck space and feet, as the TRK states it:
+
+    type     0 headlight, 1 brake/tail, 3 roof light bar, 4 special (beacon, blinker),
+             5 reverse. Type 2 does not occur in the stock MTM2 trucks.
+    heading  radians about the vertical, 0 = straight ahead (+z), pi = straight back
+    pitch    radians, positive aims up
+    spin     heading change in rad/s - the Monster Patrol beacons turn once a second
+    cone     beam length and its radius at the lamp and at the far end; length 0 = no beam
+    source   the flare sprite drawn at the lamp, radius = bitmap radius
+    msOn/Off blink period; 0,0 = steady
+*/
 function describeLights(manifest) {
   return (manifest.lights ?? [])
     .filter((light) => light?.pos)
-    .map((light) => ({ pos: light.pos, radius: Math.max(light.bitmapRadius ?? 0.15, 0.1), index: light.index }));
+    .map((light) => ({
+      index: light.index,
+      type: light.type ?? 0,
+      pos: light.pos,
+      radius: Math.max(light.bitmapRadius ?? 0.25, 0.05),
+      heading: light.heading ?? 0,
+      pitch: light.pitch ?? 0,
+      spinSpeed: light.spinSpeed ?? 0,
+      coneLength: light.coneLength ?? 0,
+      coneBaseRadius: light.coneBaseRadius ?? 0,
+      coneRimRadius: light.coneRimRadius ?? 0,
+      coneTexture: light.coneTexture ? normalizeArchiveName(light.coneTexture) : "",
+      sourceBitmap: light.sourceBitmap ? normalizeArchiveName(light.sourceBitmap) : "",
+      msOn: light.msOn ?? 0,
+      msOff: light.msOff ?? 0
+    }));
 }
 
 /*

@@ -10,15 +10,22 @@ export function decodeRawTexture(rawBytes, actBytes, textureName) {
     throw new Error(`Unsupported RAW size for ${textureName}: ${rawBytes.length} bytes`);
   }
   const rgba = new Uint8ClampedArray(width * height * 4);
+  const colorKeyAlpha = new Uint8Array(width * height);
   for (let i = 0; i < rawBytes.length; i += 1) {
     const colorIndex = rawBytes[i] * 3;
     const out = i * 4;
-    rgba[out] = palette[colorIndex];
-    rgba[out + 1] = palette[colorIndex + 1];
-    rgba[out + 2] = palette[colorIndex + 2];
+    const r = palette[colorIndex];
+    const g = palette[colorIndex + 1];
+    const b = palette[colorIndex + 2];
+    rgba[out] = r;
+    rgba[out + 1] = g;
+    rgba[out + 2] = b;
     rgba[out + 3] = 255;
+    // MTM uses palette entry zero as its transparent colour key. Keep exact-black aliases
+    // transparent too: custom ACTs sometimes duplicate black elsewhere in the table.
+    colorKeyAlpha[i] = rawBytes[i] === 0 || (r === 0 && g === 0 && b === 0) ? 0 : 255;
   }
-  return { name: textureName, width, height, rgba, sourceFormat: "RAW" };
+  return { name: textureName, width, height, rgba, colorKeyAlpha, sourceFormat: "RAW" };
 }
 
 /*
