@@ -1,4 +1,4 @@
-import { decodeActPalette } from "../texture-decoder.js";
+import { applyOpacityPlane, decodeActPalette, decodeRawTexture, rawTextureSide } from "../../vendor/openphotex/index.js";
 import { decodeTiffTexture, isTiff } from "./tiff-decoder.js";
 
 /*
@@ -27,22 +27,17 @@ import { decodeTiffTexture, isTiff } from "./tiff-decoder.js";
   authored instead of re-deriving it with the MTM colour key.
 */
 
-const MIN_SIDE = 8;
-const MAX_SIDE = 2048;
-
 /** Side length of a square 8-bit image with this many bytes, or 0 if there is none. */
 export function evoRawSide(byteLength) {
-  for (let side = MIN_SIDE; side <= MAX_SIDE; side <<= 1) {
-    if (byteLength === side * side) return side;
-  }
-  return 0;
+  return rawTextureSide(byteLength, "evo");
 }
 
 /**
  * Decodes one Evo texture to RGBA.
  *
  * `sourceBytes` is either an indexed .RAW or a .TIF; `actBytes` is the .RAW's palette and
- * `opaBytes` its optional opacity plane.
+ * `opaBytes` its optional opacity plane. RAW/ACT/OPA decoding is OpenPhotex's; the TIFF path
+ * stays here until TIFF is extracted too.
  */
 export function decodeEvoTexture(sourceBytes, actBytes, opaBytes, textureName) {
   if (isTiff(sourceBytes)) {
@@ -55,27 +50,6 @@ export function decodeEvoTexture(sourceBytes, actBytes, opaBytes, textureName) {
   const palette = decodeActPalette(actBytes);
   if (!palette) throw new Error(`${textureName}: no usable .ACT palette`);
 
-  const rgba = new Uint8ClampedArray(side * side * 4);
-  for (let i = 0; i < sourceBytes.length; i += 1) {
-    const entry = sourceBytes[i] * 3;
-    const out = i * 4;
-    rgba[out] = palette[entry];
-    rgba[out + 1] = palette[entry + 1];
-    rgba[out + 2] = palette[entry + 2];
-    rgba[out + 3] = 255;
-  }
-  return applyOpacityPlane(
-    { name: textureName, width: side, height: side, rgba, sourceFormat: "EVO", hasAlpha: false },
-    opaBytes
-  );
-}
-
-function applyOpacityPlane(decoded, opaBytes) {
-  const pixels = decoded.width * decoded.height;
-  if (!opaBytes || opaBytes.length !== pixels) return decoded;
-  const { rgba } = decoded;
-  for (let i = 0; i < pixels; i += 1) {
-    rgba[i * 4 + 3] = opaBytes[i];
-  }
-  return { ...decoded, hasAlpha: true };
+  const { width, height, rgba } = decodeRawTexture(sourceBytes, palette, { family: "evo" });
+  return applyOpacityPlane({ name: textureName, width, height, rgba, sourceFormat: "EVO", hasAlpha: false }, opaBytes);
 }

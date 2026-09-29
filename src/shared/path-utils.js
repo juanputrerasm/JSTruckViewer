@@ -1,12 +1,8 @@
-export function normalizeArchiveName(name) {
-  return (name ?? "").replace(/\\/g, "/").trim().toUpperCase();
-}
+import { normalizePodPath, podPathTitle } from "../vendor/openphotex/index.js";
 
-export function archiveTitle(name) {
-  const normalized = normalizeArchiveName(name);
-  const slash = normalized.lastIndexOf("/");
-  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
-}
+// Archive path keys come from OpenPhotex, which builds every entry's normalizedName with them.
+export const normalizeArchiveName = normalizePodPath;
+export const archiveTitle = podPathTitle;
 
 export function joinPath(...parts) {
   return parts

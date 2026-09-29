@@ -86,6 +86,10 @@ Normal maps use the engine's DirectX/green-down convention. RGB is interpreted d
 
 Updated four-wheel sets such as `16FL`, `16FR`, `16RL`, and `16RR` are selected when present. Legacy left/right wheel naming remains supported as a fallback.
 
+## Format library
+
+POD parsing and RAW/ACT/OPA decoding come from [OpenPhotex](https://github.com/juanputrerasm/OpenPhotex), the shared Terminal Reality format library also used by JSPod, JSTrackViewer and JSMTM2Converter, vendored as plain ES modules in `src/vendor/openphotex/`. The vendored copy is generated, never edited here: change OpenPhotex, then refresh it from the OpenPhotex checkout with `npm run build && npm run vendor -- ../JSTruckViewer/src/vendor/openphotex`.
+
 ## Requirements
 
 - A modern browser with JavaScript modules, Web Workers, WebGL, and Origin Private File System support

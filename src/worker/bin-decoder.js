@@ -1,19 +1,30 @@
-import { BinaryReader } from "./binary-reader.js";
+/*
+  .BIN models for the truck viewer.
 
-const SIGNATURE_LWO = 0x4d524f46;
-const SIGNATURE_ANIMATED_BIN = 0x00000020;
-const BLOCK_MRGL_MAGNIFY = 0x00000014;
-const MAX_CORNERS_PER_FACE = 256;
+  Parsing is OpenPhotex's (src/vendor/openphotex): parseBin walks the MRGL record stream the way
+  the engine strides it and returns the model as the file states it, raw vertex words and faces
+  with the texture, colour and material in force when each was read. This file keeps the
+  viewer's own half: scaling to its model units, batching faces into meshes, triangulating and
+  shading them.
+
+  Truck model space is (raw >> 1) * 512 / magnify: feet, Z up, the space the TRK anchors are
+  read into. A face's repeated corners and a model's repeated faces are dropped here, as they
+  always have been, before triangulation and normal smoothing.
+*/
+import { MRGL, MRGLMAT, MRGLMAT2, parseBin } from "../vendor/openphotex/index.js";
+
 const UV_SCALE = 0xff0000;
-const MRGL_TEXTURE64 = 62;
-const MRGL_MATERIAL = 63;
-const MRGL_MATFACET = 64;
-const MRGL_KEYFRAME64 = 65;
-const MRGL_MATERIAL2 = 66;
-const MRGLMAT_BLEND = 0x0004;
-const MRGLMAT_ALPHATEST = 0x0008;
-const MRGLMAT_TEXSOLID = 0x2000;
-const MRGLMAT2_NORMALMAP = 0x0001;
+const TRANSPARENT_FACE_TYPES = new Set([0x11, 0x33]);
+const MRGLMAT_BLEND = MRGLMAT.BLEND;
+const MRGLMAT_ALPHATEST = MRGLMAT.ALPHATEST;
+const MRGLMAT_TEXSOLID = MRGLMAT.TEXSOLID;
+
+/*
+  An ANIMATED_BIN names its frame models and carries no geometry (all 53 stock ones): after the
+  frame count and magnify word come a zero vertex count and MRGL_EOL. This viewer has always run
+  that empty payload through the geometry path too, so the model keeps the same empty fields.
+*/
+const EMPTY_PAYLOAD = { vertexListValid: true, vertices: new Int32Array(0), faces: [], materials: [], materials2: [], magnifyRecords: [], warnings: [], stopReason: null };
 
 export function decodeBinModel(bytes, modelName) {
   const model = {
@@ -31,253 +42,115 @@ export function decodeBinModel(bytes, modelName) {
   if (!bytes?.length || bytes.length < 4) {
     return model;
   }
-
-  const reader = new BinaryReader(bytes);
-  const firstType = reader.readInt32();
-  if (firstType === SIGNATURE_LWO) {
+  const bin = parseBin(bytes);
+  if (bin.kind === "lwo") {
     model.format = "LWO";
     return model;
   }
-  if (firstType === BLOCK_MRGL_MAGNIFY) {
+  if (bin.kind === "mrgl") {
     model.format = "BIN";
-    if (reader.remaining() < 4) {
+    if (bin.magnify === null) {
       return model;
     }
-    const power = reader.readInt32();
-    if (power > 0) {
-      model.magnifyPower = power;
+    if (bin.magnify > 0) {
+      model.magnifyPower = bin.magnify;
     }
-    decodeBinPayload(reader, model, 8, true);
+    applyPayload(bin, model, 512 / model.magnifyPower);
     return buildMeshes(model);
   }
-  if (firstType !== SIGNATURE_ANIMATED_BIN) {
-    model.format = `0x${(firstType >>> 0).toString(16).padStart(8, "0").toUpperCase()}`;
+  if (bin.kind !== "animated") {
+    model.format = `0x${(bin.signature >>> 0).toString(16).padStart(8, "0").toUpperCase()}`;
     return model;
   }
   model.format = "ANIMATED_BIN";
-  decodeBinPayload(reader, model, 12, false);
+  applyPayload(EMPTY_PAYLOAD, model, 1.0);
   return buildMeshes(model);
 }
 
-function decodeBinPayload(reader, model, headerBytesBeforeVertexCount, applyMagnifyAtDecode) {
-  reader.skip(headerBytesBeforeVertexCount);
-  const vertexCount = reader.readInt32();
-  if (vertexCount < 0 || vertexCount > 200000) {
+function applyPayload(bin, model, scale) {
+  if (!bin.vertexListValid) {
     return;
   }
+  const words = bin.vertices;
   const rawVertices = [];
   let rawBaseZ = 0;
-  let rawMinX = Number.MAX_SAFE_INTEGER;
-  let rawMaxX = Number.MIN_SAFE_INTEGER;
-  let rawMinY = Number.MAX_SAFE_INTEGER;
-  let rawMaxY = Number.MIN_SAFE_INTEGER;
-  let rawMinZ = Number.MAX_SAFE_INTEGER;
-  let rawMaxZ = Number.MIN_SAFE_INTEGER;
-  for (let i = 0; i < vertexCount; i += 1) {
-    const x = reader.readInt32() >> 1;
-    const z = reader.readInt32() >> 1;
-    const y = reader.readInt32() >> 1;
+  let rawMinX = Number.MAX_SAFE_INTEGER, rawMaxX = Number.MIN_SAFE_INTEGER;
+  let rawMinY = Number.MAX_SAFE_INTEGER, rawMaxY = Number.MIN_SAFE_INTEGER;
+  let rawMinZ = Number.MAX_SAFE_INTEGER, rawMaxZ = Number.MIN_SAFE_INTEGER;
+  for (let i = 0; i < words.length; i += 3) {
+    // The engine drops each word's low bit; the words are (x, z, y) with z up.
+    const x = words[i] >> 1;
+    const z = words[i + 1] >> 1;
+    const y = words[i + 2] >> 1;
     rawVertices.push({ x, y, z });
-    rawMinX = Math.min(rawMinX, x);
-    rawMaxX = Math.max(rawMaxX, x);
-    rawMinY = Math.min(rawMinY, y);
-    rawMaxY = Math.max(rawMaxY, y);
-    rawMinZ = Math.min(rawMinZ, z);
-    rawMaxZ = Math.max(rawMaxZ, z);
-    if (z < rawBaseZ) {
-      rawBaseZ = z;
-    }
+    if (x < rawMinX) rawMinX = x; if (x > rawMaxX) rawMaxX = x;
+    if (y < rawMinY) rawMinY = y; if (y > rawMaxY) rawMaxY = y;
+    if (z < rawMinZ) rawMinZ = z; if (z > rawMaxZ) rawMaxZ = z;
+    if (z < rawBaseZ) rawBaseZ = z;
   }
+  // The engine's base height: the lowest z, never above 0, less 31.
   const rawBaseZWithOffset = rawBaseZ - 31;
-  model.rawVertexBounds = {
-    vertexCount: rawVertices.length,
-    baseZ: rawBaseZWithOffset,
-    minX: rawMinX,
-    maxX: rawMaxX,
-    minY: rawMinY,
-    maxY: rawMaxY,
-    minZ: rawMinZ,
-    maxZ: rawMaxZ
-  };
-
-  const scale = applyMagnifyAtDecode ? (512 / model.magnifyPower) : 1.0;
+  model.rawVertexBounds = { vertexCount: rawVertices.length, baseZ: rawBaseZWithOffset, minX: rawMinX, maxX: rawMaxX, minY: rawMinY, maxY: rawMaxY, minZ: rawMinZ, maxZ: rawMaxZ };
   model.vertices = rawVertices.map((vertex) => ({
     x: vertex.x * scale,
     y: vertex.y * scale,
     z: vertex.z * scale
   }));
   model.baseZ = rawBaseZWithOffset * scale;
-
+  const materials = bin.materials.map((material) => ({ ...material, tint: [...material.tint] }));
+  // normalStrength is only meaningful when the record says it carries a normal map.
+  const materials2 = bin.materials2.map(({ flags2, normalStrength, reserved }) => ({
+    flags2, normalStrength: flags2 & MRGLMAT2.NORMALMAP ? normalStrength : 1, reserved: [...reserved],
+  }));
   const polygons = [];
   const textureNames = new Set();
-  let currentTexture = "";
-  let currentSolidColor = 0;
-  let currentMaterial = null;
-  let currentMaterial2 = null;
-  let materialSerial = 0;
-  let meshVerts = model.vertices.length;
-
-  blocks:
-  while (reader.remaining() >= 4) {
-    const token = reader.readInt32();
-    switch (token) {
-      case 0x00000000:
-        break blocks;
-      case 0x00000002: {
-        if (reader.remaining() < 8) break blocks;
-        reader.skip(4);
-        const nv = reader.readInt32();
-        const strip = nv * 12;
-        const tail80 = 20 * 4;
-        if (nv >= 0 && nv <= MAX_CORNERS_PER_FACE && reader.remaining() >= strip + tail80) {
-          reader.skip(strip);
-          reader.skip(tail80);
-        } else if (reader.remaining() >= 34 * 4) {
-          reader.skip(34 * 4);
-        } else {
-          break blocks;
-        }
-        break;
-      }
-      case 0x00000003: {
-        if (reader.remaining() < 8) break blocks;
-        reader.skip(8);
-        if (meshVerts < 1 || reader.remaining() < meshVerts * 12) break blocks;
-        reader.skip(meshVerts * 12);
-        break;
-      }
-      case 0x00000004: {
-        if (reader.remaining() < 8) break blocks;
-        reader.skip(4);
-        const n = reader.readInt32();
-        const need = n * 8;
-        if (n < 0 || n > 4096 || reader.remaining() < need) break blocks;
-        reader.skip(need);
-        break;
-      }
-      case 0x0000000d:
-        if (reader.remaining() < 20) break blocks;
-        reader.skip(4);
-        currentTexture = upper(reader.readFixedAscii(16));
-        break;
-      case MRGL_TEXTURE64:
-        if (reader.remaining() < 68) { model.warnings.push("Truncated MRGL_TEXTURE64 record"); break blocks; }
-        reader.skip(4);
-        currentTexture = upper(reader.readFixedAscii(64));
-        break;
-      case MRGL_MATERIAL:
-        if (reader.remaining() < 44) { model.warnings.push("Truncated MRGL_MATERIAL record"); break blocks; }
-        currentMaterial = readMaterial(reader, ++materialSerial);
-        break;
-      case MRGL_MATERIAL2:
-        if (reader.remaining() < 28) { model.warnings.push("Truncated MRGL_MATERIAL2 record"); break blocks; }
-        currentMaterial2 = readMaterial2(reader);
-        if (currentMaterial2.reserved.some((value) => value !== 0)) model.warnings.push("MRGL_MATERIAL2 has non-zero reserved fields");
-        break;
-      case MRGL_KEYFRAME64:
-        if (reader.remaining() < 4372) { model.warnings.push("Truncated MRGL_KEYFRAME64 record"); break blocks; }
-        reader.skip(4372);
-        break;
-      case 0x0000001d: {
-        if (reader.remaining() < 24) break blocks;
-        reader.skip(4);
-        const num = reader.readInt32();
-        reader.skip(16);
-        if (num < 0 || num > 1024) break blocks;
-        const tail32 = num * 32;
-        const tail8 = num * 8;
-        if (reader.remaining() >= tail32) {
-          for (let i = 0; i < num; i += 1) {
-            const frame = upper(reader.readFixedAscii(32));
-            if (i === 0) {
-              currentTexture = frame;
-            }
-          }
-        } else if (reader.remaining() >= tail8) {
-          reader.skip(tail8);
-        } else {
-          break blocks;
-        }
-        break;
-      }
-      case 0x0000000a:
-        if (reader.remaining() < 4) break blocks;
-        currentSolidColor = reader.readInt32() & 0x00ffffff;
-        break;
-      case 0x0000000c:
-        if (reader.remaining() < 24) break blocks;
-        reader.skip(24);
-        break;
-      case 0x00000012:
-        if (reader.remaining() < 4) break blocks;
-        reader.skip(4);
-        break;
-      case BLOCK_MRGL_MAGNIFY:
-        if (reader.remaining() < 4) break blocks;
-        model.magnifyPower = reader.readInt32();
-        break;
-      case 0x00000016:
-        if (reader.remaining() < 12) break blocks;
-        reader.skip(12);
-        break;
-      case 0x00000017:
-        if (reader.remaining() < 8) break blocks;
-        reader.skip(8);
-        break;
-      case 0x0000001f: {
-        if (reader.remaining() < 8) break blocks;
-        reader.skip(4);
-        const n = reader.readInt32();
-        const need = n * 4;
-        if (n < 0 || n > 200000 || reader.remaining() < need) break blocks;
-        reader.skip(need);
-        break;
-      }
-      case 0x00000011:
-      case 0x00000018:
-      case 0x00000022:
-      case 0x00000029:
-      case 0x00000033:
-      case 0x00000034:
-      case 0x0000000e: {
-        const polygon = readMappedFace(reader, token, currentTexture, currentSolidColor, meshVerts, null, null);
-        if (polygon) {
-          polygons.push(polygon);
-          if (polygon.textureName) textureNames.add(polygon.textureName);
-        }
-        break;
-      }
-      case 0x00000005:
-      case 0x00000019:
-      case 0x00000006:
-      case 0x0000000f: {
-        const polygon = readUnmappedFace(reader, token, currentTexture, currentSolidColor, meshVerts);
-        if (polygon) {
-          polygons.push(polygon);
-          if (polygon.textureName) textureNames.add(polygon.textureName);
-        }
-        break;
-      }
-      case MRGL_MATFACET: {
-        const polygon = readMappedFace(reader, token, currentTexture, currentSolidColor, meshVerts, currentMaterial, currentMaterial2);
-        if (polygon) {
-          polygons.push(polygon);
-          if (polygon.textureName) textureNames.add(polygon.textureName);
-        } else {
-          model.warnings.push(`Invalid MRGL_MATFACET at byte ${reader.position}`);
-        }
-        break;
-      }
-      default:
-        model.warnings.push(`Unsupported BIN opcode ${token} (0x${(token >>> 0).toString(16)}) at byte ${reader.position - 4}; model truncated`);
-        break blocks;
+  for (const face of bin.faces) {
+    const polygon = truckPolygon(face, materials, materials2);
+    if (polygon) {
+      polygons.push(polygon);
+      if (polygon.textureName) textureNames.add(polygon.textureName);
+    } else if (face.opcode === MRGL.MATFACET) {
+      model.warnings.push(`Invalid MRGL_MATFACET at byte ${face.offset + 24 + face.vertexIndices.length * 12}`);
     }
   }
+  model.warnings.push(...bin.warnings);
+  for (const material2 of bin.materials2) {
+    if (material2.reserved.some((value) => value !== 0)) model.warnings.push("MRGL_MATERIAL2 has non-zero reserved fields");
+  }
+  if (bin.stopReason && /^unknown record type/.test(bin.stopReason)) {
+    model.warnings.push(`Unsupported BIN opcode: ${bin.stopReason}; model truncated`);
+  }
+  if (bin.magnifyRecords.length) model.magnifyPower = bin.magnifyRecords[bin.magnifyRecords.length - 1];
 
   model.polygons = dedupePolygons(polygons);
   model.textureNames = [...textureNames];
   model.vertexCount = model.vertices.length;
   model.polygonCount = model.polygons.length;
+}
+
+/* The viewer's polygon: repeated corners removed, and the legacy face-type flags spelled out. */
+function truckPolygon(face, materials, materials2) {
+  const cleaned = dedupeFaceCorners(face.vertexIndices, face.u, face.v);
+  if (cleaned.vertexIndices.length < 3) return null;
+  const polygon = {
+    type: face.opcode,
+    textureName: upper(face.textureName),
+    vertexIndices: cleaned.vertexIndices,
+    textureU: cleaned.textureU,
+    textureV: cleaned.textureV,
+    solid: face.opcode === 0x00000019,
+    solidColor: face.solidColor,
+    transparent: face.opcode === 0x00000011 || face.opcode === 0x00000033,
+    storedNormalX: face.storedNormal[0],
+    storedNormalY: face.storedNormal[1],
+    storedNormalZ: face.storedNormal[2],
+    faceMagic: face.magic
+  };
+  if (face.mapped) {
+    polygon.material = face.material === null ? null : materials[face.material];
+    polygon.material2 = face.material2 === null ? null : materials2[face.material2];
+  }
+  return polygon;
 }
 
 function buildMeshes(model) {
@@ -500,117 +373,6 @@ function computeNormal(a, b, c) {
   return { x: nx / length, y: ny / length, z: nz / length };
 }
 
-function readMappedFace(reader, type, textureName, solidColor, meshVertexCount, material = null, material2 = null) {
-  if (meshVertexCount < 1) return null;
-  const n = reader.readInt32();
-  const need = 16 + n * 12;
-  if (n < 3 || n > MAX_CORNERS_PER_FACE || reader.remaining() < need) return null;
-  const storedNormalX = reader.readInt32();
-  const storedNormalY = reader.readInt32();
-  const storedNormalZ = reader.readInt32();
-  const faceMagic = reader.readInt32();
-  const vertexIndices = [];
-  const textureU = [];
-  const textureV = [];
-  for (let i = 0; i < n; i += 1) {
-    vertexIndices.push(reader.readInt32());
-    textureU.push(reader.readInt32());
-    textureV.push(reader.readInt32());
-  }
-  if (!indicesValid(vertexIndices, meshVertexCount)) {
-    if (!indicesValidOneBased(vertexIndices, meshVertexCount)) {
-      return null;
-    }
-    for (let i = 0; i < vertexIndices.length; i += 1) {
-      vertexIndices[i] -= 1;
-    }
-  }
-  const cleaned = dedupeFaceCorners(vertexIndices, textureU, textureV);
-  if (cleaned.vertexIndices.length < 3) return null;
-  return {
-    type,
-    textureName,
-    vertexIndices: cleaned.vertexIndices,
-    textureU: cleaned.textureU,
-    textureV: cleaned.textureV,
-    solid: type === 0x00000019,
-    solidColor,
-    transparent: type === 0x00000011 || type === 0x00000033,
-    storedNormalX,
-    storedNormalY,
-    storedNormalZ,
-    faceMagic,
-    material,
-    material2
-  };
-}
-
-function readMaterial(reader, id) {
-  const flags = reader.readInt32() >>> 0;
-  const reflectivity = fixed16(reader.readInt32());
-  const fresnelBias = fixed16(reader.readInt32());
-  const fresnelStrength = fixed16(reader.readInt32());
-  const baseAlpha = fixed16(reader.readInt32());
-  const specPower = fixed16(reader.readInt32());
-  const emissive = fixed16(reader.readInt32());
-  const tint = [fixed16(reader.readInt32()), fixed16(reader.readInt32()), fixed16(reader.readInt32())];
-  const foliage = reader.readInt32() >>> 0;
-  return {
-    id, flags, reflectivity, fresnelBias, fresnelStrength, baseAlpha, specPower, emissive, tint,
-    alphaRef: foliage & 0xffff,
-    translucency: foliage >>> 16
-  };
-}
-
-function readMaterial2(reader) {
-  const flags2 = reader.readInt32() >>> 0;
-  const normalStrength = fixed16(reader.readInt32());
-  const reserved = [];
-  for (let i = 0; i < 5; i++) reserved.push(reader.readInt32());
-  return { flags2, normalStrength: flags2 & MRGLMAT2_NORMALMAP ? normalStrength : 1, reserved };
-}
-
-function fixed16(value) { return value / 65536; }
-
-function readUnmappedFace(reader, type, textureName, solidColor, meshVertexCount) {
-  if (meshVertexCount < 1) return null;
-  const n = reader.readInt32();
-  const need = 16 + n * 4;
-  if (n < 3 || n > MAX_CORNERS_PER_FACE || reader.remaining() < need) return null;
-  const storedNormalX = reader.readInt32();
-  const storedNormalY = reader.readInt32();
-  const storedNormalZ = reader.readInt32();
-  const faceMagic = reader.readInt32();
-  const vertexIndices = [];
-  for (let i = 0; i < n; i += 1) {
-    vertexIndices.push(reader.readInt32());
-  }
-  if (!indicesValid(vertexIndices, meshVertexCount)) {
-    if (!indicesValidOneBased(vertexIndices, meshVertexCount)) {
-      return null;
-    }
-    for (let i = 0; i < vertexIndices.length; i += 1) {
-      vertexIndices[i] -= 1;
-    }
-  }
-  const cleaned = dedupeFaceCorners(vertexIndices, new Array(n).fill(0), new Array(n).fill(0));
-  if (cleaned.vertexIndices.length < 3) return null;
-  return {
-    type,
-    textureName,
-    vertexIndices: cleaned.vertexIndices,
-    textureU: cleaned.textureU,
-    textureV: cleaned.textureV,
-    solid: type === 0x00000019,
-    solidColor,
-    transparent: type === 0x00000011 || type === 0x00000033,
-    storedNormalX,
-    storedNormalY,
-    storedNormalZ,
-    faceMagic
-  };
-}
-
 function dedupeFaceCorners(vertexIndices, textureU, textureV) {
   const nextVertexIndices = [];
   const nextTextureU = [];
@@ -664,14 +426,6 @@ function polygonSignature(polygon) {
   });
 }
 
-function indicesValid(indices, meshVertexCount) {
-  return indices.every((index) => index >= 0 && index < meshVertexCount);
-}
-
-function indicesValidOneBased(indices, meshVertexCount) {
-  return indices.every((index) => index - 1 >= 0 && index - 1 < meshVertexCount);
-}
-
 function upper(value) {
   return (value ?? "").trim().toUpperCase();
 }
@@ -679,28 +433,4 @@ function upper(value) {
 function representativeColor(textureName) {
   void textureName;
   return 0x8f8f8f;
-}
-
-function hslToHex(h, s, l) {
-  const hue2rgb = (p, q, t) => {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1 / 6) return p + (q - p) * 6 * t;
-    if (t < 1 / 2) return q;
-    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-    return p;
-  };
-  let r;
-  let g;
-  let b;
-  if (s === 0) {
-    r = g = b = l;
-  } else {
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    r = hue2rgb(p, q, h + 1 / 3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1 / 3);
-  }
-  return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
 }
