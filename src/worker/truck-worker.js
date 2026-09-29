@@ -7,8 +7,8 @@ import { decodeCprCmdModel } from "./cpr/cmd-parser.js";
 import { decodeEvoTexture } from "./evo/evo-texture.js";
 import { decodeRawTexture } from "./texture-decoder.js";
 import { decodeTrueColorTexture } from "./image-decoder.js";
-import { METALCR2_ACT_NAME } from "../shared/metalcr2-palette.js";
 import { readFile, readTextFile } from "../shared/opfs.js";
+import { bundledPalette, paletteCandidates } from "../vendor/openphotex/index.js";
 
 const WHEEL_KEYS = [
   "faxle.rtire.static_bpos",
@@ -132,7 +132,9 @@ async function assembleTruck({ sessionId, opfsPodPath, podIndex, manifest, manif
     }
   }
 
-  const paletteContext = { podIndex, sessionId, opfsPodPath, extractionScope, extractedFiles, cache: new Map() };
+  // The game picks the bundled METALCR2: CPR ships its own. Evo keeps MTM1's, as before.
+  const origin = isCpr ? "CPR" : isMtm1 ? "MTM1" : "MTM2";
+  const paletteContext = { podIndex, origin, sessionId, opfsPodPath, extractionScope, extractedFiles, cache: new Map() };
 
   if (isEvo) {
     const textures = await loadEvoTextures(textureNames, models, paletteContext, warnings);
@@ -842,26 +844,30 @@ function pickWheelCandidate(candidates, suffix) {
   return candidates.find((entry) => entry.title.toUpperCase().endsWith(upperSuffix)) ?? null;
 }
 
-// Palette resolution for paletted RAW textures, in the order the games themselves use:
-//   1. a same-name .ACT beside the texture (ART/BIGTOP.ACT for ART/BIGTOP.RAW);
-//   2. ART/METALCR2.ACT from the archive, the shared palette MTM1 applied to everything else;
-//   3. the bundled copy of METALCR2.ACT, so an MTM1 TRUCK.POD renders without STARTUP.POD.
-// MTM2 archives normally ship a same-name palette per texture and stop at step 1.
+/*
+  Palette resolution for paletted RAW textures. The ranking is OpenPhotex's paletteCandidates:
+  a same-name .ACT beside the texture, then the palette the POD1 entry names, then the
+  archive's own METALCR2.ACT, then the bundled METALCR2 for this game (CPR's differs from
+  MTM1's and MTM2's), so a TRUCK.POD renders without STARTUP.POD. MTM2 archives normally ship
+  a same-name palette per texture and stop at the first.
+*/
 async function resolvePaletteBytes(textureName, context) {
-  const { podIndex, sessionId, opfsPodPath, extractionScope, extractedFiles, cache } = context;
-  const entry = findArtEntry(podIndex, textureName, ".ACT") ?? findArtEntry(podIndex, METALCR2_ACT_NAME, ".ACT");
-  if (!entry) {
-    return null;
+  const { podIndex, origin, sessionId, opfsPodPath, extractionScope, extractedFiles, cache } = context;
+  const rawEntry = findArtEntry(podIndex, textureName, ".RAW");
+  for (const candidate of paletteCandidates(podIndex, { name: textureName, entry: rawEntry }, { origin, kind: "model" })) {
+    if (candidate.bundled) return bundledPalette(candidate.bundled);
+    const entry = candidate.entry;
+    if (!entry) continue;
+    if (!cache.has(entry.normalizedName)) {
+      const actPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
+      await extractPodEntry(opfsPodPath, entry, actPath);
+      extractedFiles.push(actPath);
+      cache.set(entry.normalizedName, new Uint8Array(await (await readFile(actPath)).arrayBuffer()));
+    }
+    const bytes = cache.get(entry.normalizedName);
+    if (bytes.length >= 768) return bytes;
   }
-  if (cache.has(entry.normalizedName)) {
-    return cache.get(entry.normalizedName);
-  }
-  const actPath = extractedPath(sessionId, extractionScope, entry.normalizedName);
-  await extractPodEntry(opfsPodPath, entry, actPath);
-  extractedFiles.push(actPath);
-  const bytes = new Uint8Array(await (await readFile(actPath)).arrayBuffer());
-  cache.set(entry.normalizedName, bytes);
-  return bytes;
+  return null;
 }
 
 async function decodeExtractedModel(entry, label, sessionId, opfsPodPath, extractionScope, extractedFiles) {
